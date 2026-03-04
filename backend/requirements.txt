@@ -1,0 +1,57 @@
+# Core FastAPI & Web
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.9
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# Database
+psycopg>=3.2.0
+sqlalchemy>=2.0.0
+alembic>=1.13.0
+
+# ML and Data Science (flexible versions for compatibility)
+scikit-learn>=1.0.0
+numpy>=1.21.0
+pandas>=1.3.0
+
+# Scraping & Social Media
+twikit>=2.1.0
+praw>=7.7.0
+
+# Sentiment Analysis & NLP
+transformers>=4.30.0
+torch>=2.0.0
+langdetect>=1.0.9
+nltk>=3.8.0
+
+# Word Cloud & Image Processing
+wordcloud>=1.9.0
+pillow>=10.0.0
+
+# News API
+newsapi-python>=0.2.7
+
+# Background Jobs & Scheduling
+apscheduler>=3.10.0
+
+# Utilities
+python-dotenv>=1.0.0
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+requests>=2.32.0
+matplotlib==3.8.2
+plotly==5.18.0
+
+# Web Scraping & Parsing
+beautifulsoup4==4.12.3
+lxml==5.1.0
+requests==2.31.0
+
+# Background Jobs
+apscheduler==3.10.4
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.3
+httpx==0.26.0
