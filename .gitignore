@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 *.so
 .Python
+.pytest_cache
 build/
 develop-eggs/
 dist/
@@ -65,3 +66,10 @@ dist/
 
 docs/
 ref/
+
+docker-compose.yml
+polipulse_dump.sql
+pytest_out.txt
+pytest_out_utf8.txt
+test_discourse_out.txt
+test_discourse_out2.txt
