@@ -1,11 +1,13 @@
 """
 Twitter Service
 Integrates Twikit for Twitter scraping
-Adapted from ref/collect.py with database integration
+Supports: party, handle, hashtag, bilingual, trending hashtag extraction
 """
 import asyncio
 import os
+import re
 import random
+from collections import Counter
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import logging
@@ -13,18 +15,26 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-# Known political/official handles used to classify source type.
+# ─── Political handle / term configuration ────────────────────────────────────
+
 POLITICAL_HANDLES_BY_PARTY = {
-    "BJP": {"BJP4India", "narendramodi", "AmitShah", "JPNadda", "myogiadityanath"},
-    "INC": {"INCIndia", "RahulGandhi", "kharge", "ShashiTharoor", "priyankagandhi"},
-    "AAP": {"AamAadmiParty", "ArvindKejriwal", "raghav_chadha", "AtishiAAP"},
+    "BJP":  {"BJP4India", "narendramodi", "AmitShah", "JPNadda", "myogiadityanath", "PMOIndia", "rajnathsingh"},
+    "INC":  {"INCIndia", "RahulGandhi", "kharge", "ShashiTharoor", "priyankagandhi", "JairamRamesh"},
+    "AAP":  {"AamAadmiParty", "ArvindKejriwal", "raghav_chadha", "AtishiAAP", "BhagwantMann"},
+    "SP":   {"samajwadiparty", "yadavakhilesh", "dimpleyadav"},
+    "TMC":  {"AITCofficial", "MamataOfficial", "abhishekaitc"},
+    "BSP":  {"BSP4India", "MayawatiSCBSP"},
+    "CPIM": {"cpimspeak", "sitaramyechury"},
 }
 
-# Terms used to capture broader public conversation for each party.
 PUBLIC_TERMS_BY_PARTY = {
-    "BJP": ["narendramodi", "AmitShah", "BJP", "#BJP", "#ModiHaiToMumkinHai"],
-    "INC": ["RahulGandhi", "#RahulGandhi", "#Congress", "#BharatJodoYatra", "INCIndia"],
-    "AAP": ["ArvindKejriwal", "#Kejriwal", "#AAP", "#DelhiModel", "AamAadmiParty"],
+    "BJP":  ["narendramodi", "AmitShah", "BJP", "#BJP", "#ModiHaiToMumkinHai", "#NarendraModi", "Modi government"],
+    "INC":  ["RahulGandhi", "#RahulGandhi", "#Congress", "#BharatJodoYatra", "INCIndia", "#Rahul"],
+    "AAP":  ["ArvindKejriwal", "#Kejriwal", "#AAP", "#DelhiModel", "AamAadmiParty", "#ArvindKejriwal"],
+    "SP":   ["akhilesh yadav", "#AkhileshYadav", "#SP", "samajwadi party"],
+    "TMC":  ["mamata banerjee", "#MamataBanerjee", "#TMC", "#AllIndia TrinaMool"],
+    "BSP":  ["mayawati", "#Mayawati", "#BSP", "#DalitPolitics"],
+    "CPIM": ["sitaram yechury", "#CPIM", "#LeftFront"],
 }
 
 ALL_POLITICAL_HANDLES = {
@@ -36,38 +46,38 @@ HANDLE_TO_PARTY = {
     for handle in handles
 }
 
+# Hashtag regex for trending extraction
+_HASHTAG_RE = re.compile(r"#(\w+)", re.UNICODE)
+
 
 class TwitterService:
     """Twitter scraping service using Twikit"""
-    
+
     def __init__(self, cookies_path: str = "cookies.json"):
         self.cookies_path = cookies_path
         self.client = None
         self.initialized = False
-        
+
     async def _init_client(self):
         """Initialize Twikit client with cookies"""
         if self.initialized:
             return
-            
         try:
             from twikit import Client
-            
             if not os.path.exists(self.cookies_path):
-                logger.error(f"Cookies file not found: {self.cookies_path}")
                 raise FileNotFoundError(f"Twitter cookies not found at {self.cookies_path}")
-            
-            self.client = Client(language='en-US')
+            self.client = Client(language="en-US")
             self.client.load_cookies(self.cookies_path)
             self.initialized = True
             logger.info("Twitter client initialized successfully")
-            
         except ImportError:
             logger.error("Twikit not installed. Install with: pip install twikit")
             raise
         except Exception as e:
             logger.error(f"Failed to initialize Twitter client: {e}")
             raise
+
+    # ─── Query builders ───────────────────────────────────────────────────────
 
     @staticmethod
     def _normalize_handle(handle: str) -> str:
@@ -92,7 +102,7 @@ class TwitterService:
         return HANDLE_TO_PARTY.get(username.lower())
 
     def _build_handles_query(self, handles: List[str], language: str, since_days: int) -> str:
-        handle_clause = " OR ".join(f"from:{handle}" for handle in handles)
+        handle_clause = " OR ".join(f"from:{h}" for h in handles)
         lang_fragment = "" if language == "all" else f" lang:{language}"
         return f"({handle_clause}){lang_fragment}{self._build_since_fragment(since_days)}"
 
@@ -100,6 +110,16 @@ class TwitterService:
         terms_clause = " OR ".join(terms)
         lang_fragment = "" if language == "all" else f" lang:{language}"
         return f"({terms_clause}){lang_fragment}{self._build_since_fragment(since_days)}"
+
+    def _build_hashtag_query(self, hashtag: str, language: str, since_days: int) -> str:
+        """Build a search query for a specific hashtag or keyword."""
+        tag = hashtag.strip()
+        if not tag.startswith("#"):
+            tag = f"#{tag}"
+        lang_fragment = "" if language == "all" else f" lang:{language}"
+        return f"{tag}{lang_fragment}{self._build_since_fragment(since_days)}"
+
+    # ─── Core scrape loop ────────────────────────────────────────────────────
 
     async def _scrape_queries(
         self,
@@ -114,12 +134,13 @@ class TwitterService:
     ) -> Dict[str, int]:
         from app.models.social_media import TwitterPost
         from app.services.sentiment_service import sentiment_analyzer
+        from app.services.alignment_model_service import alignment_model_service
         from twikit import TooManyRequests
 
         target_handle_set = {
-            self._normalize_handle(handle).lower()
-            for handle in (target_handles or [])
-            if str(handle).strip()
+            self._normalize_handle(h).lower()
+            for h in (target_handles or [])
+            if str(h).strip()
         }
 
         stats = {"total_fetched": 0, "new_inserted": 0, "duplicates": 0, "queries": len(queries)}
@@ -156,7 +177,6 @@ class TwitterService:
                         screen_name = (getattr(user_obj, "screen_name", "") or "").strip()
                         screen_name_key = screen_name.lower()
 
-                        # Political if known party/leader handle, or explicitly targeted handle.
                         source_type = (
                             "political"
                             if screen_name_key in ALL_POLITICAL_HANDLES or screen_name_key in target_handle_set
@@ -166,6 +186,14 @@ class TwitterService:
                         inferred_party = party or self._resolve_party_from_username(screen_name)
                         forced_lang = language if language in {"en", "hi"} else None
                         sentiment = sentiment_analyzer.analyze_sentiment(content, forced_lang)
+                        
+                        # ML Alignment Prediction
+                        aligned_party = None
+                        aligned_conf = 0.0
+                        if source_type == "public":
+                            alg_res = alignment_model_service.predict_alignment(content)
+                            aligned_party = alg_res.get("predicted_alignment", "Unknown")
+                            aligned_conf = alg_res.get("alignment_confidence", 0.0)
 
                         url = getattr(tweet, "url", None)
                         if not url and screen_name:
@@ -181,6 +209,8 @@ class TwitterService:
                             language=sentiment["language"],
                             sentiment_label=sentiment["label"],
                             sentiment_score=sentiment["score"],
+                            predicted_alignment=aligned_party,
+                            alignment_confidence=aligned_conf,
                             likes=getattr(tweet, "favorite_count", 0) or 0,
                             retweets=getattr(tweet, "retweet_count", 0) or 0,
                             replies=getattr(tweet, "reply_count", 0) or 0,
@@ -200,8 +230,12 @@ class TwitterService:
 
                 except TooManyRequests as e:
                     rate_limit_reset = e.rate_limit_reset
-                    wait_time = (rate_limit_reset - datetime.now()).total_seconds()
+                    wait_time = rate_limit_reset - int(datetime.now().timestamp())
                     wait_time = max(10, wait_time + 5)
+                    if wait_time > 300:
+                        logger.warning(f"Twitter severely rate limited ({wait_time:.0f}s). Aborting early to prevent frontend timeout.")
+                        stats["message"] = f"Rate limited. Returning partial results after waiting would take {wait_time:.0f}s."
+                        return stats
                     logger.warning(f"Twitter rate limited. Waiting {wait_time:.0f}s...")
                     await asyncio.sleep(wait_time)
                 except Exception as e:
@@ -211,11 +245,13 @@ class TwitterService:
 
             logger.info(f"Completed query {query_idx + 1}: inserted {collected} posts")
             if query_idx < len(queries) - 1:
-                wait_time = random.uniform(45, 90)
+                wait_time = random.uniform(3, 7)
                 logger.info(f"Query cooldown: {wait_time:.0f}s")
                 await asyncio.sleep(wait_time)
 
         return stats
+
+    # ─── Public scrape methods ────────────────────────────────────────────────
 
     async def scrape_party_tweets(
         self,
@@ -228,22 +264,7 @@ class TwitterService:
         cooldown_seconds: tuple = (3, 8),
         product: str = "Latest",
     ) -> Dict[str, int]:
-        """
-        Scrape tweets for a political party
-        
-        Args:
-            db: Database session
-            party: Party name (BJP, INC, AAP)
-            language: en, hi, or all
-            since_days: how many days back to scrape
-            include_public: include non-handle public conversation query for party
-            target_count: Target number of tweets per query
-            cooldown_seconds: Min/max seconds to wait between requests
-            product: Twikit search product (Latest/Top)
-            
-        Returns:
-            Statistics dict with counts
-        """
+        """Scrape tweets for a political party (official handles + optional public conversation)."""
         await self._init_client()
 
         party_key = (party or "").strip().upper()
@@ -261,14 +282,9 @@ class TwitterService:
             queries.append(self._build_public_query(public_terms, language=language, since_days=since_days))
 
         stats = await self._scrape_queries(
-            db,
-            queries=queries,
-            party=party_key,
-            target_handles=handles,
-            language=language,
-            target_count=target_count,
-            cooldown_seconds=cooldown_seconds,
-            product=product,
+            db, queries=queries, party=party_key, target_handles=handles,
+            language=language, target_count=target_count,
+            cooldown_seconds=cooldown_seconds, product=product,
         )
         logger.info(f"Twitter scraping complete for {party_key}: {stats}")
         return stats
@@ -287,32 +303,115 @@ class TwitterService:
         """Scrape tweets from explicitly provided handles."""
         await self._init_client()
 
-        normalized_handles = []
-        for handle in handles:
-            clean = self._normalize_handle(handle)
-            if clean:
-                normalized_handles.append(clean)
-        normalized_handles = list(dict.fromkeys(normalized_handles))
-
-        if not normalized_handles:
+        normalized = list(dict.fromkeys(
+            self._normalize_handle(h) for h in handles if h.strip()
+        ))
+        if not normalized:
             raise ValueError("handles must contain at least one valid handle")
 
         language = self._normalize_language(language)
         party_key = (party or "").strip().upper() or None
-        queries = [self._build_handles_query(normalized_handles, language=language, since_days=since_days)]
+        queries = [self._build_handles_query(normalized, language=language, since_days=since_days)]
 
         stats = await self._scrape_queries(
-            db,
-            queries=queries,
-            party=party_key,
-            target_handles=normalized_handles,
-            language=language,
-            target_count=target_count,
-            cooldown_seconds=cooldown_seconds,
-            product=product,
+            db, queries=queries, party=party_key, target_handles=normalized,
+            language=language, target_count=target_count,
+            cooldown_seconds=cooldown_seconds, product=product,
         )
-        logger.info(f"Twitter custom handle scrape complete for {normalized_handles}: {stats}")
+        logger.info(f"Twitter handle scrape complete for {normalized}: {stats}")
         return stats
+
+    async def scrape_hashtag(
+        self,
+        db: Session,
+        hashtag: str,
+        party: Optional[str] = None,
+        language: str = "en",
+        since_days: int = 7,
+        target_count: int = 200,
+        cooldown_seconds: tuple = (3, 8),
+        product: str = "Latest",
+    ) -> Dict[str, int]:
+        """
+        Scrape tweets matching a hashtag or keyword.
+
+        Args:
+            hashtag: Hashtag or keyword to search (e.g. '#BJP', 'Modi', '#OperationSindoor')
+            party: Optional party to tag captured tweets with
+            language: en, hi, or all
+            since_days: Look-back window in days
+            target_count: Target tweet count
+            product: Latest or Top
+        """
+        await self._init_client()
+
+        language = self._normalize_language(language)
+        party_key = (party or "").strip().upper() or None
+
+        query = self._build_hashtag_query(hashtag, language=language, since_days=since_days)
+        logger.info(f"Hashtag scrape — query: {query}")
+
+        stats = await self._scrape_queries(
+            db, queries=[query], party=party_key, target_handles=[],
+            language=language, target_count=target_count,
+            cooldown_seconds=cooldown_seconds, product=product,
+        )
+        logger.info(f"Hashtag scrape complete for '{hashtag}': {stats}")
+        return stats
+
+    async def scrape_bilingual(
+        self,
+        db: Session,
+        mode: str = "party",
+        party: Optional[str] = None,
+        handles: Optional[List[str]] = None,
+        hashtag: Optional[str] = None,
+        since_days: int = 30,
+        target_count: int = 200,
+        include_public: bool = True,
+        product: str = "Latest",
+    ) -> Dict[str, Dict]:
+        """
+        Run scraping in BOTH English and Hindi in a single call.
+
+        Args:
+            mode: 'party' | 'handle' | 'hashtag'
+            party: Party name (for mode='party')
+            handles: List of handles (for mode='handle')
+            hashtag: Hashtag (for mode='hashtag')
+            since_days, target_count, include_public, product: forwarded to the underlying scraper
+        """
+        results: Dict[str, Dict] = {}
+
+        for lang in ("en", "hi"):
+            logger.info(f"Bilingual scrape — language: {lang}")
+            try:
+                if mode == "party" and party:
+                    stats = await self.scrape_party_tweets(
+                        db, party=party, language=lang, since_days=since_days,
+                        include_public=include_public, target_count=target_count, product=product,
+                    )
+                elif mode == "handle" and handles:
+                    stats = await self.scrape_handles(
+                        db, handles=handles, party=party, language=lang,
+                        since_days=since_days, target_count=target_count, product=product,
+                    )
+                elif mode == "hashtag" and hashtag:
+                    stats = await self.scrape_hashtag(
+                        db, hashtag=hashtag, party=party, language=lang,
+                        since_days=since_days, target_count=target_count, product=product,
+                    )
+                else:
+                    stats = await self.scrape_all_parties(
+                        db, language=lang, since_days=since_days,
+                        include_public=include_public, target_count=target_count, product=product,
+                    )
+                results[lang] = stats
+            except Exception as e:
+                logger.error(f"Bilingual scrape failed for lang={lang}: {e}")
+                results[lang] = {"error": str(e)}
+
+        return results
 
     async def scrape_all_parties(
         self,
@@ -324,28 +423,90 @@ class TwitterService:
         cooldown_seconds: tuple = (3, 8),
         product: str = "Latest",
     ) -> Dict[str, Dict]:
-        """Scrape all configured parties"""
+        """Scrape all configured parties."""
         results = {}
-
         for party in POLITICAL_HANDLES_BY_PARTY.keys():
             logger.info(f"Starting scrape for {party}")
             try:
                 stats = await self.scrape_party_tweets(
-                    db,
-                    party=party,
-                    language=language,
-                    since_days=since_days,
-                    include_public=include_public,
-                    target_count=target_count,
-                    cooldown_seconds=cooldown_seconds,
-                    product=product,
+                    db, party=party, language=language, since_days=since_days,
+                    include_public=include_public, target_count=target_count,
+                    cooldown_seconds=cooldown_seconds, product=product,
                 )
                 results[party] = stats
             except Exception as e:
                 logger.error(f"Failed to scrape {party}: {e}")
-                results[party] = {'error': str(e)}
-        
+                results[party] = {"error": str(e)}
         return results
+
+    # ─── Trending hashtags ────────────────────────────────────────────────────
+
+    def get_trending_hashtags(
+        self,
+        db: Session,
+        days: int = 1,
+        limit: int = 15,
+        party: Optional[str] = None,
+        language: Optional[str] = None,
+        source_type: Optional[str] = None,
+    ) -> List[Dict]:
+        """
+        Extract and rank trending hashtags from stored tweets.
+
+        Parses #tag tokens from tweet content, counts occurrences,
+        and enriches with total engagement (likes + retweets + replies).
+
+        Returns a list of dicts: {hashtag, count, engagement, party_distribution}
+        """
+        from app.models.social_media import TwitterPost
+        from sqlalchemy import desc
+
+        cutoff = datetime.now() - timedelta(days=days)
+        query = db.query(TwitterPost).filter(TwitterPost.posted_at >= cutoff)
+
+        if party:
+            query = query.filter(TwitterPost.party == party.upper())
+        if language:
+            query = query.filter(TwitterPost.language == language)
+        if source_type:
+            query = query.filter(TwitterPost.source_type == source_type)
+
+        posts = query.all()
+
+        # Count hashtags and accumulate engagement + party distribution
+        hashtag_counts: Counter = Counter()
+        hashtag_engagement: Dict[str, int] = {}
+        hashtag_parties: Dict[str, Counter] = {}
+
+        for post in posts:
+            tags = _HASHTAG_RE.findall(post.content or "")
+            engagement = (post.likes or 0) + (post.retweets or 0) + (post.replies or 0)
+            for tag in tags:
+                tag_lower = tag.lower()
+                hashtag_counts[tag_lower] += 1
+                hashtag_engagement[tag_lower] = hashtag_engagement.get(tag_lower, 0) + engagement
+                if tag_lower not in hashtag_parties:
+                    hashtag_parties[tag_lower] = Counter()
+                if post.party:
+                    hashtag_parties[tag_lower][post.party] += 1
+
+        # Sort by count desc, then engagement
+        top = sorted(
+            hashtag_counts.items(),
+            key=lambda x: (x[1], hashtag_engagement.get(x[0], 0)),
+            reverse=True,
+        )[:limit]
+
+        return [
+            {
+                "hashtag": f"#{tag}",
+                "count": count,
+                "engagement": hashtag_engagement.get(tag, 0),
+                "top_party": hashtag_parties[tag].most_common(1)[0][0] if hashtag_parties[tag] else None,
+                "party_distribution": dict(hashtag_parties.get(tag, {})),
+            }
+            for tag, count in top
+        ]
 
 
 # Global instance

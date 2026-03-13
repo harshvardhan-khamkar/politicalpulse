@@ -6,7 +6,7 @@ from sqlalchemy import text
 
 from app.config import settings
 from app.database import Base, engine
-from app.api import auth, elections, polls, parties, social_media, predictions_news, admin
+from app.api import auth, elections, polls, parties, social_media, predictions_news, admin, nlp_analysis, events
 from app.models.users import AppUser  # noqa: F401 - ensures table metadata is registered
 from app.security import ensure_admin_user_exists
 
@@ -183,6 +183,8 @@ app.include_router(social_media.router)
 app.include_router(predictions_news.router_predictions)
 app.include_router(predictions_news.router_news)
 app.include_router(admin.router)
+app.include_router(nlp_analysis.router)
+app.include_router(events.router)
 
 
 @app.get("/")

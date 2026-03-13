@@ -33,7 +33,7 @@ def create_prediction(prediction: PredictionCreate, db: Session = Depends(get_db
 
 @router_predictions.get("/", response_model=List[PredictionResponse])
 def get_predictions(
-    prediction_type: Optional[str] = Query(None, regex="^(pm_candidate|party_seats|constituency)$"),
+    prediction_type: Optional[str] = Query(None, pattern="^(pm_candidate|party_seats|constituency)$"),
     party: Optional[str] = None,
     state_name: Optional[str] = None,
     valid_only: bool = Query(True, description="Only return valid predictions"),

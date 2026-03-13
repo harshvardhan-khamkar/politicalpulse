@@ -5,7 +5,7 @@ from sqlalchemy.exc import OperationalError
 
 USER = "polipulse_admin"
 DB_NAME = "polipulse"
-HOST = "localhost"
+HOST = "127.0.0.1"
 PORT = "5432"
 
 PASSWORDS_TO_TRY = [
@@ -34,8 +34,8 @@ def test_connection():
             connection.close()
             print(f"✅ SUCCESS! Correct password is: '{password}'")
             return
-        except OperationalError:
-            print(f"❌ Failed")
+        except OperationalError as e:
+            print(f"❌ Failed: {e}")
         except Exception as e:
             print(f"❌ Error: {e}")
 

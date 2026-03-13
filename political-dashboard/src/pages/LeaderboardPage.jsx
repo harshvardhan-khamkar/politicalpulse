@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import api from '../api/api';
 import CountdownCarousel from '../components/dashboard/CountdownCarousel';
 import CandidateCard from '../components/dashboard/CandidateCard';
 import CandidatesTable from '../components/dashboard/CandidatesTable';
@@ -11,17 +12,47 @@ const topCandidates = [
 ];
 
 const LeaderboardPage = () => {
+    const [candidates, setCandidates] = useState(topCandidates);
+
+    useEffect(() => {
+        const fetchSentiments = async () => {
+            const updated = await Promise.all(
+                topCandidates.map(async (c) => {
+                    try {
+                        const res = await api.get('/social/sentiment/latest', {
+                            params: { entity_name: c.party, entity_type: 'party' }
+                        });
+                        const score = parseFloat(res.data.sentiment_score);
+                        const trust = Math.round(((score + 1) / 2) * 100);
+                        return { ...c, trustIndex: trust };
+                    } catch (e) {
+                        return { ...c, trustIndex: 50 }; // default neutral
+                    }
+                })
+            );
+            setCandidates(updated);
+        };
+        fetchSentiments();
+    }, []);
+
     return (
         <div className="space-y-6">
             <CountdownCarousel />
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {topCandidates.map((c, i) => (
+                {candidates.map((c, i) => (
                     <CandidateCard key={i} {...c} />
                 ))}
             </div>
-            <CandidatesTable />
+
+            {/* Table row - now taking full width since trending moved to sidebar */}
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                <div className="xl:col-span-3">
+                    <CandidatesTable />
+                </div>
+            </div>
         </div>
     );
 };
 
 export default LeaderboardPage;
+

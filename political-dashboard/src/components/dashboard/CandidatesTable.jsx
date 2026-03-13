@@ -1,16 +1,40 @@
-import React from 'react';
-import { MoreVertical, Filter } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { MoreVertical, Filter, TrendingUp } from 'lucide-react';
+import api from '../../api/api';
+
+const initialCandidates = [
+    { id: 1, name: "Narendra Modi", winRate: "92%", party: "BJP", state: "Varanasi", partyLogo: "https://upload.wikimedia.org/wikipedia/commons/1/1e/Bharatiya_Janata_Party_logo.svg" },
+    { id: 2, name: "Rahul Gandhi", winRate: "60%", party: "INC", state: "Wayanad", partyLogo: "https://upload.wikimedia.org/wikipedia/commons/6/6c/Indian_National_Congress_hand_logo.svg" },
+    { id: 3, name: "Arvind Kejriwal", winRate: "30%", party: "AAP", state: "New Delhi", partyLogo: "https://upload.wikimedia.org/wikipedia/commons/3/30/Aam_Aadmi_Party_logo_%28English%29.svg" },
+    { id: 4, name: "Smriti Irani", winRate: "75%", party: "BJP", state: "Amethi", partyLogo: "https://upload.wikimedia.org/wikipedia/commons/1/1e/Bharatiya_Janata_Party_logo.svg" },
+    { id: 5, name: "Shashi Tharoor", winRate: "28%", party: "INC", state: "Thiruvananthapuram", partyLogo: "https://upload.wikimedia.org/wikipedia/commons/6/6c/Indian_National_Congress_hand_logo.svg" },
+    { id: 6, name: "Akhilesh Yadav", winRate: "84%", party: "SP", state: "Uttar Pradesh", partyLogo: "" },
+    { id: 7, name: "Chandrababu Naidu", winRate: "55%", party: "TDP", state: "Andhra Pradesh", partyLogo: "" },
+];
 
 const CandidatesTable = () => {
-    const candidates = [
-        { id: 1, name: "Narendra Modi", winRate: "92%", party: "BJP", state: "Varanasi", partyLogo: "https://upload.wikimedia.org/wikipedia/commons/1/1e/Bharatiya_Janata_Party_logo.svg" },
-        { id: 2, name: "Rahul Gandhi", winRate: "60%", party: "INC", state: "Wayanad", partyLogo: "https://upload.wikimedia.org/wikipedia/commons/6/6c/Indian_National_Congress_hand_logo.svg" },
-        { id: 3, name: "Arvind Kejriwal", winRate: "30%", party: "AAP", state: "New Delhi", partyLogo: "https://upload.wikimedia.org/wikipedia/commons/3/30/Aam_Aadmi_Party_logo_%28English%29.svg" },
-        { id: 4, name: "Smriti Irani", winRate: "75%", party: "BJP", state: "Amethi", partyLogo: "https://upload.wikimedia.org/wikipedia/commons/1/1e/Bharatiya_Janata_Party_logo.svg" },
-        { id: 5, name: "Shashi Tharoor", winRate: "28%", party: "INC", state: "Thiruvananthapuram", partyLogo: "https://upload.wikimedia.org/wikipedia/commons/6/6c/Indian_National_Congress_hand_logo.svg" },
-        { id: 6, name: "Akhilesh Yadav", winRate: "84%", party: "Samajwadi Party (SP)", state: "Uttar Pradesh", partyLogo: "" },
-        { id: 7, name: "Chandrababu Naidu", winRate: "55%", party: "Telugu Desam Party (TDP)", state: "Andhra Pradesh", partyLogo: "" },
-    ];
+    const [candidates, setCandidates] = useState(initialCandidates);
+
+    useEffect(() => {
+        const fetchSentiments = async () => {
+            const updated = await Promise.all(
+                initialCandidates.map(async (c) => {
+                    try {
+                        const res = await api.get('/social/sentiment/latest', {
+                            params: { entity_name: c.party, entity_type: 'party' }
+                        });
+                        const score = parseFloat(res.data.sentiment_score);
+                        const trust = Math.round(((score + 1) / 2) * 100);
+                        return { ...c, trustIndex: trust };
+                    } catch (e) {
+                        return { ...c, trustIndex: 50 }; // default neutral
+                    }
+                })
+            );
+            setCandidates(updated);
+        };
+        fetchSentiments();
+    }, []);
 
     return (
         <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6 mt-8">
@@ -34,6 +58,7 @@ const CandidatesTable = () => {
                             <th className="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Win Rate</th>
                             <th className="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Party</th>
                             <th className="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">State</th>
+                            <th className="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Trust Index</th>
                             <th className="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider"></th>
                         </tr>
                     </thead>
@@ -66,6 +91,19 @@ const CandidatesTable = () => {
                                     </div>
                                 </td>
                                 <td className="py-4 px-4 text-sm text-gray-500">{candidate.state}</td>
+                                <td className="py-4 px-4">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-16 bg-gray-100 h-1.5 rounded-full overflow-hidden">
+                                            <div
+                                                className={`h-full rounded-full ${candidate.trustIndex >= 50 ? 'bg-green-500' : 'bg-red-500'}`}
+                                                style={{ width: `${candidate.trustIndex !== undefined ? candidate.trustIndex : 50}%` }}
+                                            ></div>
+                                        </div>
+                                        <span className="text-xs font-bold text-gray-700">
+                                            {candidate.trustIndex !== undefined ? candidate.trustIndex : 50}%
+                                        </span>
+                                    </div>
+                                </td>
                                 <td className="py-4 px-4 text-right">
                                     <button className="text-gray-400 hover:text-gray-600">
                                         <MoreVertical size={16} />

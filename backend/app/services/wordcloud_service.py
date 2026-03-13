@@ -24,7 +24,7 @@ class WordCloudService:
         self.initialized = False
         
     def _init_nltk(self):
-        """Initialize NLTK components"""
+        """Initialize NLTK components explicitly"""
         if self.initialized:
             return
             
@@ -33,72 +33,110 @@ class WordCloudService:
             from nltk.corpus import stopwords
             from nltk.stem import WordNetLemmatizer
             
-            # Download required NLTK data
-            try:
-                nltk.data.find('corpora/stopwords')
-            except LookupError:
-                nltk.download('stopwords', quiet=True)
-            
-            try:
-                nltk.data.find('corpora/wordnet')
-            except LookupError:
-                nltk.download('wordnet', quiet=True)
-            
-            try:
-                nltk.data.find('taggers/averaged_perceptron_tagger')
-            except LookupError:
-                nltk.download('averaged_perceptron_tagger', quiet=True)
+            # Explicitly set download dir to ensure we don't have permission errors
+            import os
+            nltk_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'nltk_data')
+            os.makedirs(nltk_data_dir, exist_ok=True)
+            if nltk_data_dir not in nltk.data.path:
+                nltk.data.path.append(nltk_data_dir)
+
+            # Download required NLTK data securely
+            for pkg in ['stopwords', 'wordnet', 'punkt', 'averaged_perceptron_tagger']:
+                try:
+                    # Check if already downloaded to avoid redownloading
+                    if pkg == 'stopwords': nltk.data.find('corpora/stopwords')
+                    elif pkg == 'wordnet': nltk.data.find('corpora/wordnet')
+                    elif pkg == 'punkt': nltk.data.find('tokenizers/punkt')
+                    elif pkg == 'averaged_perceptron_tagger': nltk.data.find('taggers/averaged_perceptron_tagger')
+                except LookupError:
+                    logger.info(f"Downloading NLTK package: {pkg}")
+                    nltk.download(pkg, download_dir=nltk_data_dir, quiet=True)
             
             self.stopwords = set(stopwords.words('english'))
             
-            # Add custom political stopwords
-            custom_stopwords = {
-                'bjp', 'inc', 'aap', 'congress', 'party', 'year',
-                'india', 'indian', 'government', 'people', 'time',
-                'make', 'get', 'one', 'two', 'three', 'new', 'good'
+            # Expanded custom political noise words (English)
+            custom_en = {
+                'today', 'every', 'first', 'last', 'work', 'state', 'year', 'month', 'day', 'shri', 'ji',
+                'one', 'two', 'three', 'many', 'done', 'also', 'must', 'make', 'get', 'take', 'like', 'time',
+                'people', 'country', 'national', 'prime', 'minister', 'chief', 'ji', 'thank', 'thanks',
+                'happy', 'best', 'wish', 'wishes', 'meeting', 'meet', 'great', 'good', 'new', 'all', 'any',
+                'bjp', 'inc', 'aap', 'congress', 'party', 'rt', 'http', 'https', 'amp', 'via', 'latest',
+                'hon', 'honble', 'sri', 'shree', 'delhi', 'tamil', 'nadu', 'bengal', 'west', 'karnataka',
+                'madurai', 'chennai', 'puducherry', 'government', 'india', 'indian'
             }
-            self.stopwords.update(custom_stopwords)
+            self.stopwords.update(custom_en)
+
+            # Basic Hindi stopwords
+            custom_hi = {
+                'आज', 'कल', 'अब', 'जब', 'तब', 'है', 'हो', 'को', 'का', 'की', 'के', 'में', 'पर', 'से', 'भी',
+                'ने', 'ही', 'लिए', 'गया', 'गई', 'गए', 'कर', 'रहा', 'रही', 'रहे', 'था', 'थी', 'थे', 'जो',
+                'कि', 'यह', 'वह', 'इस', 'उस', 'वे', 'ये', 'जी', 'श्री', 'सब', 'सबसे', 'बहुत', 'तरफ', 'कहा',
+                'गया', 'किया', 'जाना', 'होने', 'होता', 'होती', 'होते', 'साथ', 'अपने', 'अपनी', 'अपने',
+                'माननीय', 'जी', 'श्री', 'श्रीमती', 'तथा', 'एवं', 'द्वारा', 'हो चुका'
+            }
+            self.stopwords.update(custom_hi)
             
             self.lemmatizer = WordNetLemmatizer()
             self.initialized = True
             logger.info("NLTK initialized successfully")
             
         except ImportError:
-            logger.warning("NLTK not available. Basic word cloud generation only")
+            logger.warning("NLTK not available. Basic word cloud generation only.")
             self.initialized = False
         except Exception as e:
             logger.error(f"Error initializing NLTK: {e}")
             self.initialized = False
-    
+
     def clean_text(self, text: str) -> str:
         """Clean and preprocess text"""
         self._init_nltk()
         
         # Remove URLs
-        text = re.sub(r'http\S+|www\S+', '', text)
+        text = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', text)
         
-        # Remove @mentions and#hashtags
-        text = re.sub(r'[@#]\w+', '', text)
+        # Remove @mentions
+        text = re.sub(r'@\w+', '', text)
         
         # Remove punctuation and numbers
-        text = re.sub(r'[^\w\s]', ' ', text)
+        # Preserve: Alphanumeric, Space, Hashtag, Devanagari range, and Zero-Width-Joiners (\u200c, \u200d)
+        text = re.sub(r'[^\w\s#\u0900-\u097F\u200C\u200D]', ' ', text)
         text = re.sub(r'\d+', '', text)
         
-        # Lowercase
+        # Lowercase (Safe for Devanagari)
         text = text.lower()
         
         # Remove extra whitespace
         text = ' '.join(text.split())
         
-        # Lemmatize and remove stopwords if available
-        if self.initialized and self.lemmatizer:
-            words = text.split()
-            words = [self.lemmatizer.lemmatize(word) for word in words 
-                    if word not in self.stopwords and len(word) > 2]
-            text = ' '.join(words)
+        # Lemmatize and remove stopwords
+        if self.initialized:
+            def is_hindi(w):
+                return any('\u0900' <= c <= '\u097F' for c in w)
+                
+            clean_words = []
+            for word in text.split():
+                clean_w = word.replace('#', '')
+                # Skip if empty, too short, or in stopwords
+                if not clean_w or clean_w in self.stopwords:
+                    continue
+                
+                # Minimum length check (2 for English, 1 for Hindi but usually we want at least 2 chars for cloud)
+                if len(clean_w) < 2:
+                    continue
+
+                if is_hindi(word):
+                    # Preserve Hindi words as is (no lemmatization)
+                    clean_words.append(word)
+                elif self.lemmatizer:
+                    # Lemmatize English words
+                    clean_words.append(self.lemmatizer.lemmatize(word))
+                else:
+                    clean_words.append(word)
+                    
+            text = ' '.join(clean_words)
         
         return text
-    
+
     def generate_wordcloud(
         self,
         db: Session,
@@ -109,21 +147,6 @@ class WordCloudService:
         days: int = 30,
         language: str = 'en'
     ) -> bytes:
-        """
-        Generate word cloud image from social posts
-        
-        Args:
-            db: Database Session
-            party: Filter by party
-            leader_name: Filter by leader
-            platform: Filter by platform (twitter/reddit)
-            source_type: Filter by source category (political/public)
-            days: Days of history to include
-            language: Language for font selection
-            
-        Returns:
-            PNG image bytes
-        """
         from app.models.social_media import TwitterPost, RedditPost
         
         try:
@@ -157,16 +180,12 @@ class WordCloudService:
         
         if not posts:
             logger.warning("No posts found for word cloud generation")
-            # Return empty image
             img = Image.new('RGB', (800, 400), color='white')
             buf = io.BytesIO()
             img.save(buf, format='PNG')
             return buf.getvalue()
         
-        # Combine all text
-        combined_text = ' '.join([post.content for post in posts])
-        
-        # Clean text
+        combined_text = ' '.join([post.content for post in posts if post.content])
         cleaned_text = self.clean_text(combined_text)
         
         if not cleaned_text.strip():
@@ -178,29 +197,55 @@ class WordCloudService:
         
         # Select font based on language
         font_path = None
-        if language == 'hi':
-            # For Hindi, try to use Devanagari font
+        if language == 'hi' or language == 'all':
+            # For Hindi, try to use Windows Native Devanagari fonts so text doesn't render as boxes
             possible_fonts = [
-                'C:/Windows/Fonts/NotoSansDevanagari-Regular.ttf',
-                '/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf',
-                None  # Fallback to default
+                'C:/Windows/Fonts/Nirmala.ttc', # Correct Windows TrueType Collection format
+                'C:/Windows/Fonts/Nirmala.ttf',
+                'C:/Windows/Fonts/mangal.ttf',
+                'C:/Windows/Fonts/aparaj.ttf',
+                'C:/Windows/Fonts/NotoSansDevanagari-Regular.ttf', # Linux WSL fallback
+                None  # Final Fallback to default
             ]
             for font in possible_fonts:
                 if font and os.path.exists(font):
                     font_path = font
                     break
         
-        # Generate word cloud
+        # Generate word frequencies ourselves to ensure correct Hindi tokenization
+        # Use a regex that keeps Devanagari words (and their matras) together
+        regexp = r"[\u0900-\u097F\u200C\u200D\w']+"
+        
+        # WordCloud's default regexp often breaks Indic matras.
+        # We'll use our own logic or pass the regexp to the constructor.
         wc = WordCloud(
             width=1600,
             height=1000,
             background_color='white',
             colormap='viridis',
-            max_words=100,
+            max_words=150,
             font_path=font_path,
             relative_scaling=0.5,
-            min_font_size=10
-        ).generate(cleaned_text)
+            min_font_size=12,
+            regexp=regexp,
+            collocations=False # Avoid repeating single letters as collocations
+        )
+        
+        # Process frequencies to bypass internal wordcloud tokenization issues
+        word_counts = wc.process_text(cleaned_text)
+        
+        # Final filter: remove single characters from the word cloud (often fragmented letters)
+        # unless they are meaningful emoji or specific tokens.
+        filtered_counts = {w: freq for w, freq in word_counts.items() if len(w) > 1}
+        
+        if not filtered_counts:
+            logger.warning("No words met frequency/length criteria")
+            img = Image.new('RGB', (800, 400), color='white')
+            buf = io.BytesIO()
+            img.save(buf, format='PNG')
+            return buf.getvalue()
+
+        wc.generate_from_frequencies(filtered_counts)
         
         # Convert to image bytes
         image = wc.to_image()

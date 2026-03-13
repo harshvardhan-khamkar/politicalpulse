@@ -1,0 +1,22 @@
+# Advanced ML Pipeline Requirements
+# Run pip install -r requirements_ml.txt in your environment
+
+# Data manipulation
+pandas>=1.5.0
+numpy>=1.21.0
+
+# Transformer-based Sentiment
+transformers>=4.20.0
+torch>=2.0.0
+# accelerate>=0.21.0
+
+# Advanced Topic Modeling
+bertopic>=0.16.0
+sentence-transformers>=2.2.0
+
+# Machine Learning (Alignment)
+scikit-learn>=1.0.0
+
+# Visualizations (Optional, for exploratory dashboard tasks)
+plotly>=5.10.0
+matplotlib>=3.5.0

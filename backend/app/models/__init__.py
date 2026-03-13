@@ -5,6 +5,7 @@ from app.models.polls import Poll, PollVote
 from app.models.parties import Party, PartyLeader
 from app.models.predictions_news import Prediction, NewsArticle
 from app.models.users import AppUser
+from app.models.events_topics import PoliticalEvent, TopicData
 
 __all__ = [
     "ElectionResult",
@@ -18,4 +19,6 @@ __all__ = [
     "Prediction",
     "NewsArticle",
     "AppUser",
+    "PoliticalEvent",
+    "TopicData",
 ]

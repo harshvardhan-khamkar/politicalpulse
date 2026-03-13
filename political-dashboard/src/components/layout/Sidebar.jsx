@@ -4,6 +4,8 @@ import {
     Search,
     BarChart2,
     PieChart,
+    Trophy,
+    Activity,
     Vote,
     Settings,
     HelpCircle,
@@ -13,7 +15,9 @@ import {
     Globe,
     MapPin,
     LineChart,
-    ShieldCheck
+    ShieldCheck,
+    TrendingUp,
+    Twitter
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -29,7 +33,11 @@ const Sidebar = () => {
         {
             title: "Analytics",
             items: [
-                { to: '/', icon: BarChart2, label: 'Leaderboard' },
+                { to: '/', icon: Trophy, label: 'Leaderboard' },
+                { to: '/topics', icon: Activity, label: 'Topic Analysis' },
+                { to: '/events', icon: LineChart, label: 'Discourse Mapping' },
+                { to: '/top-tweets', icon: Twitter, label: 'Top Tweets' },
+                { to: '/trending', icon: TrendingUp, label: 'Trending Topics' },
                 { to: '/analytics', icon: PieChart, label: 'Insights' },
                 { to: '/party-info', icon: Megaphone, label: 'Party Information' },
             ]

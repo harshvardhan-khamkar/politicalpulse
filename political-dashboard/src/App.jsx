@@ -6,6 +6,7 @@ import DashboardLayout from './components/layout/DashboardLayout';
 import LeaderboardPage from './pages/LeaderboardPage';
 import InsightsPage from './pages/InsightsPage';
 import PartyInfoPage from './pages/PartyInfoPage';
+import TrendingPage from './pages/TrendingPage';
 import ElectionResultsPage from './pages/ElectionResultsPage';
 import VisualizationsPage from './pages/VisualizationsPage';
 import PollsPage from './pages/PollsPage';
@@ -14,6 +15,9 @@ import LocalNewsPage from './pages/LocalNewsPage';
 import GlobalNewsPage from './pages/GlobalNewsPage';
 import PartyDetailPage from './pages/PartyDetailPage';
 import AuthPage from './pages/AuthPage';
+import TopicAnalysisPage from './pages/TopicAnalysisPage';
+import EventsTimelinePage from './pages/EventsTimelinePage';
+import TopTweetsPage from './pages/TopTweetsPage';
 import SettingsPage from './pages/SettingsPage';
 import SupportPage from './pages/SupportPage';
 import AdminDashboardPage from './pages/AdminDashboardPage';
@@ -36,6 +40,10 @@ function App() {
           {/* Analytics */}
           <Route index element={<LeaderboardPage />} />
           <Route path="analytics" element={<InsightsPage />} />
+          <Route path="trending" element={<TrendingPage />} />
+          <Route path="topics" element={<TopicAnalysisPage />} />
+          <Route path="events" element={<EventsTimelinePage />} />
+          <Route path="top-tweets" element={<TopTweetsPage />} />
           <Route path="party-info" element={<PartyInfoPage />} />
           <Route path="party-information" element={<PartyInfoPage />} />
           <Route path="party-information/:partyId" element={<PartyDetailPage />} />
