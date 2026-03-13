@@ -1,20 +1,11 @@
 import React, { useState } from 'react';
-import { Twitter, MessageSquare, Newspaper, Brain, Loader2, CheckCircle2, AlertCircle, Play } from 'lucide-react';
+import { MessageSquare, Newspaper, Brain, Loader2, CheckCircle2, AlertCircle, Play } from 'lucide-react';
+import TwitterScraperPanel from './TwitterScraperPanel';
 import api from '../../api/api';
 
-// ─── Action config ────────────────────────────────────────────────────────────
+// ─── Simple action tiles (Reddit, News, Sentiment) ────────────────────────────
 
-const ACTIONS = [
-    {
-        id: 'twitter',
-        label: 'Trigger Twitter Scrape',
-        description: 'Scrape latest political tweets and store in database.',
-        icon: Twitter,
-        endpoint: '/admin/scrape/twitter',
-        iconColor: 'text-sky-500',
-        iconBg: 'bg-sky-50',
-        btnColor: 'bg-sky-600 hover:bg-sky-700 shadow-sky-200',
-    },
+const SIMPLE_ACTIONS = [
     {
         id: 'reddit',
         label: 'Trigger Reddit Scrape',
@@ -47,11 +38,9 @@ const ACTIONS = [
     },
 ];
 
-// ─── Single Control Card ──────────────────────────────────────────────────────
-
-const ControlCard = ({ action }) => {
+const SimpleControlCard = ({ action }) => {
     const [loading, setLoading] = useState(false);
-    const [result, setResult] = useState(null); // { ok, data }
+    const [result, setResult] = useState(null);
     const Icon = action.icon;
 
     const run = async () => {
@@ -69,7 +58,6 @@ const ControlCard = ({ action }) => {
 
     return (
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
-            {/* Card body */}
             <div className="p-5 flex-1">
                 <div className="flex items-start gap-4">
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${action.iconBg}`}>
@@ -80,7 +68,6 @@ const ControlCard = ({ action }) => {
                         <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">{action.description}</p>
                     </div>
                 </div>
-
                 <button
                     onClick={run}
                     disabled={loading}
@@ -88,19 +75,15 @@ const ControlCard = ({ action }) => {
                 >
                     {loading
                         ? <><Loader2 className="w-4 h-4 animate-spin" /> Running...</>
-                        : <><Play className="w-3.5 h-3.5" /> Run</>
-                    }
+                        : <><Play className="w-3.5 h-3.5" /> Run</>}
                 </button>
             </div>
 
-            {/* Result panel */}
             {result && (
                 <div className={`border-t px-5 py-4 ${result.ok ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
                     <div className={`flex items-center gap-1.5 text-xs font-semibold mb-2 ${result.ok ? 'text-green-600' : 'text-red-600'}`}>
-                        {result.ok
-                            ? <><CheckCircle2 className="w-3.5 h-3.5" /> Success</>
-                            : <><AlertCircle className="w-3.5 h-3.5" /> Failed</>
-                        }
+                        {result.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
+                        {result.ok ? 'Success' : 'Failed'}
                     </div>
                     <pre className="text-xs text-gray-700 font-mono whitespace-pre-wrap break-words max-h-40 overflow-y-auto leading-relaxed">
                         {JSON.stringify(result.data, null, 2)}
@@ -114,17 +97,27 @@ const ControlCard = ({ action }) => {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const SystemControl = () => (
-    <div className="space-y-6">
+    <div className="space-y-8">
         <div>
             <h1 className="text-2xl font-bold text-gray-900">System Controls</h1>
             <p className="text-sm text-gray-400 mt-1">Trigger backend jobs manually. Each action runs independently.</p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            {ACTIONS.map(action => (
-                <ControlCard key={action.id} action={action} />
-            ))}
-        </div>
+        {/* Twitter Scraper — full panel */}
+        <section>
+            <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Twitter / X Scraper</h2>
+            <TwitterScraperPanel />
+        </section>
+
+        {/* Other actions */}
+        <section>
+            <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Other Actions</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+                {SIMPLE_ACTIONS.map(action => (
+                    <SimpleControlCard key={action.id} action={action} />
+                ))}
+            </div>
+        </section>
     </div>
 );
 

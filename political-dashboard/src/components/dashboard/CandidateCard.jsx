@@ -1,7 +1,7 @@
 import React from 'react';
 import clsx from 'clsx';
 
-const CandidateCard = ({ name, party, image, partyLogo, popularity, winRate, polls, position }) => {
+const CandidateCard = ({ name, party, image, partyLogo, popularity, winRate, polls, trustIndex }) => {
     return (
         <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100">
             <div className="flex items-center justify-between mb-4">
@@ -51,12 +51,17 @@ const CandidateCard = ({ name, party, image, partyLogo, popularity, winRate, pol
                 </div>
 
                 <div>
-                    <p className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Position</p>
+                    <p className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Trust Index</p>
                     <div className="flex items-end gap-1">
-                        <span className="text-lg font-bold text-gray-800">{position}%</span>
+                        <span className="text-lg font-bold text-gray-800">
+                            {trustIndex !== undefined ? trustIndex : 50}%
+                        </span>
                     </div>
                     <div className="w-full bg-gray-100 h-1 rounded-full mt-1">
-                        <div className="bg-blue-600 h-1 rounded-full" style={{ width: `${position}%` }}></div>
+                        <div
+                            className={`h-1 rounded-full ${trustIndex >= 50 ? 'bg-green-500' : 'bg-red-500'}`}
+                            style={{ width: `${trustIndex !== undefined ? trustIndex : 50}%` }}
+                        ></div>
                     </div>
                 </div>
             </div>

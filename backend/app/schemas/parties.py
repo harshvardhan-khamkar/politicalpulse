@@ -111,7 +111,8 @@ class PartyWikiResponse(BaseModel):
     leaders: List[PartyLeaderResponse] = []
     has_logo_image: bool = False
     has_eci_chart_image: bool = False
-    wordcloud_image_url: str
+    wordcloud_image_url_en: str
+    wordcloud_image_url_hi: str
 
 
 class PartyLeaderBulkUpsert(BaseModel):

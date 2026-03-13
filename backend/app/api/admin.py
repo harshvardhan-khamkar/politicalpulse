@@ -467,6 +467,102 @@ async def trigger_twitter_scrape(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/scrape/twitter/hashtag")
+async def trigger_hashtag_scrape(
+    hashtag: str = Query(..., description="Hashtag or keyword to search (e.g. #BJP, #Modi, OperationSindoor)"),
+    party: Optional[str] = Query(None, description="Optional: tag captured tweets with this party"),
+    language: str = Query("en", pattern="^(en|hi|all)$"),
+    since_days: int = Query(7, ge=1, le=365),
+    target_count: int = Query(200, ge=10, le=2000),
+    product: str = Query("Latest", pattern="^(Latest|Top)$"),
+    db: Session = Depends(get_db),
+):
+    """
+    Scrape tweets for a specific hashtag or keyword.
+
+    - hashtag: '#BJP', '#Congress', 'NarendraModi', etc.
+    - language: en | hi | all
+    - since_days: look-back window (default 7)
+    - target_count: max tweets to collect
+    - product: Latest or Top results
+    """
+    try:
+        tag = hashtag.strip()
+        logger.info(f"Starting Twitter hashtag scrape: {tag} (lang={language}, days={since_days})")
+        stats = await twitter_service.scrape_hashtag(
+            db,
+            hashtag=tag,
+            party=party,
+            language=language,
+            since_days=since_days,
+            target_count=target_count,
+            product=product,
+        )
+        automation = _run_auto_post_processing(db, scrape_stats=stats, platform="twitter", party=party)
+        return {
+            "status": "success",
+            "message": f"Hashtag scrape completed for '{tag}'",
+            "mode": "hashtag",
+            "hashtag": tag,
+            "language": language,
+            "stats": stats,
+            "automation": automation,
+        }
+    except Exception as e:
+        logger.error(f"Hashtag scrape failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/scrape/twitter/bilingual")
+async def trigger_bilingual_scrape(
+    mode: str = Query("party", pattern="^(party|handle|hashtag|all)$",
+                      description="Scrape mode: party | handle | hashtag | all"),
+    party: Optional[str] = Query(None, description="Party name (BJP, INC, AAP, SP, TMC, BSP, CPIM)"),
+    handles: Optional[str] = Query(None, description="Comma-separated handles (for mode=handle)"),
+    hashtag: Optional[str] = Query(None, description="Hashtag or keyword (for mode=hashtag)"),
+    since_days: int = Query(30, ge=1, le=365),
+    target_count: int = Query(100, ge=10, le=1000),
+    include_public: bool = Query(True),
+    product: str = Query("Latest", pattern="^(Latest|Top)$"),
+    db: Session = Depends(get_db),
+):
+    """
+    Run scraping in BOTH English and Hindi in a single call.
+
+    - mode: party | handle | hashtag | all
+    - Sets up two consecutive scrapes (lang=en then lang=hi)
+    - Runs automatic sentiment + wordcloud post-processing
+    """
+    try:
+        parsed_handles = None
+        if handles:
+            parsed_handles = [h.strip().lstrip("@") for h in handles.split(",") if h.strip()]
+
+        logger.info(f"Starting bilingual scrape (mode={mode}, party={party}, hashtag={hashtag})")
+        results = await twitter_service.scrape_bilingual(
+            db,
+            mode=mode,
+            party=party,
+            handles=parsed_handles,
+            hashtag=hashtag,
+            since_days=since_days,
+            target_count=target_count,
+            include_public=include_public,
+            product=product,
+        )
+        automation = _run_auto_post_processing(db, scrape_stats=results, platform="twitter", party=party)
+        return {
+            "status": "success",
+            "message": "Bilingual scrape (EN + HI) completed",
+            "mode": mode,
+            "results": results,
+            "automation": automation,
+        }
+    except Exception as e:
+        logger.error(f"Bilingual scrape failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/scrape/reddit")
 def trigger_reddit_scrape(
     subreddit: Optional[str] = None,

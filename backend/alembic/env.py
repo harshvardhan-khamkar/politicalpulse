@@ -30,9 +30,9 @@ from app.database import Base
 
 # Import all models so Alembic can detect them
 from app.models import (
-    ElectionResult, SocialPost, SentimentData,
+    ElectionResult, TwitterPost, RedditPost, SentimentData,
     Poll, PollVote, Party, PartyLeader,
-    Prediction, NewsArticle
+    Prediction, NewsArticle, AppUser
 )
 
 target_metadata = Base.metadata

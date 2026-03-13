@@ -23,6 +23,7 @@ from app.schemas.parties import (
 )
 from app.security import get_current_admin
 from app.services.wordcloud_service import wordcloud_service
+from app.services.wiki_service import wiki_service
 
 router = APIRouter(prefix="/parties", tags=["Parties"])
 
@@ -277,10 +278,60 @@ def get_party_wiki(party_id: int, db: Session = Depends(get_db)):
         "leaders": party.leaders,
         "has_logo_image": bool(party.logo_image_data),
         "has_eci_chart_image": bool(party.eci_chart_image_data),
-        "wordcloud_image_url": (
-            f"/parties/{party.id}/wordcloud?platform=twitter&source_type=political&days=365&language=all"
+        "wordcloud_image_url_en": (
+            f"/parties/{party.id}/wordcloud?platform=twitter&source_type=political&days=365&language=en"
+        ),
+        "wordcloud_image_url_hi": (
+            f"/parties/{party.id}/wordcloud?platform=twitter&source_type=political&days=365&language=hi"
         ),
     }
+
+
+@router.post("/{party_id}/wiki/sync", response_model=PartyResponse)
+def sync_party_wiki(
+    party_id: int,
+    db: Session = Depends(get_db),
+    current_admin: AppUser = Depends(get_current_admin),
+):
+    """
+    Fetch information from Wikipedia and update the party details.
+    Admin only.
+    """
+    party = db.query(Party).filter(Party.id == party_id).first()
+    if not party:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Party with ID {party_id} not found",
+        )
+
+    # Fetch from Wiki
+    wiki_data = wiki_service.get_party_info(party.name)
+    if not wiki_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Could not find Wikipedia information for {party.name}",
+        )
+
+    # Update fields if found
+    if wiki_data.get("overview"):
+        party.overview = wiki_data["overview"]
+    if wiki_data.get("history"):
+        party.history = wiki_data["history"]
+    if wiki_data.get("ideology"):
+        party.ideology = wiki_data["ideology"]
+    if wiki_data.get("founded_year"):
+        party.founded_year = wiki_data["founded_year"]
+
+    try:
+        db.commit()
+        db.refresh(party)
+        return party
+    except IntegrityError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error updating party info: {str(e)}",
+        )
 
 
 @router.post("/{party_id}/assets", response_model=PartyAssetsUploadResponse)

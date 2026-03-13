@@ -1,0 +1,20 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.2, pytest-7.4.4, pluggy-1.6.0
+rootdir: D:\harshvardhan-khamkar\politicalpulse
+plugins: anyio-4.12.1
+collected 1 item
+
+backend\test_endpoints.py E                                              [100%]
+
+=================================== ERRORS ====================================
+_______________________ ERROR at setup of test_endpoint _______________________
+file D:\harshvardhan-khamkar\politicalpulse\backend\test_endpoints.py, line 9
+  def test_endpoint(url, method="GET", data=None, expected_status=200):
+E       fixture 'url' not found
+>       available fixtures: anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, doctest_namespace, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+D:\harshvardhan-khamkar\politicalpulse\backend\test_endpoints.py:9
+=========================== short test summary info ===========================
+ERROR backend/test_endpoints.py::test_endpoint
+============================== 1 error in 0.13s ===============================

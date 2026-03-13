@@ -301,6 +301,42 @@ def get_latest_sentiment(
     }
 
 
+@router.get("/trending/hashtags")
+def get_trending_hashtags(
+    days: int = Query(1, ge=1, le=30, description="Days to look back"),
+    limit: int = Query(15, ge=5, le=50, description="Number of hashtags to return"),
+    party: Optional[str] = None,
+    language: Optional[str] = None,
+    source_type: Optional[str] = Query(None, pattern="^(political|public)$"),
+    db: Session = Depends(get_db),
+):
+    """
+    Get trending hashtags extracted from stored tweets.
+
+    Parses #tag tokens from tweet content and ranks by:
+    - frequency (count of tweets containing the tag)
+    - engagement (likes + retweets + replies)
+
+    Returns party distribution to show which parties use each tag.
+    """
+    from app.services.twitter_service import twitter_service
+    trending = twitter_service.get_trending_hashtags(
+        db,
+        days=days,
+        limit=limit,
+        party=party,
+        language=language,
+        source_type=source_type,
+    )
+    return {
+        "period_days": days,
+        "party_filter": party,
+        "language_filter": language,
+        "count": len(trending),
+        "hashtags": trending,
+    }
+
+
 @router.get("/trending/{platform}")
 def get_trending_topics(
     platform: str = Path(..., pattern="^(twitter|reddit)$"),

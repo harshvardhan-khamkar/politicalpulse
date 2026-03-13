@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Plus, Pencil, Trash2, Upload, Users,
-    Loader2, AlertCircle, X, CheckCircle2, ImageIcon, ChevronDown, ChevronUp
+    Loader2, AlertCircle, X, CheckCircle2, ImageIcon, ChevronDown, ChevronUp, Globe
 } from 'lucide-react';
 import api from '../../api/api';
 
@@ -66,8 +66,8 @@ const PartyModal = ({ party, onClose, onSaved }) => {
                 total_mps: form.total_mps !== '' ? Number(form.total_mps) : null,
                 vote_share_percentage: form.vote_share_percentage !== '' ? Number(form.vote_share_percentage) : null,
             };
-            if (isEdit) await api.put(`/admin/parties/${party.id}`, payload);
-            else await api.post('/admin/parties', payload);
+            if (isEdit) await api.put(`/parties/${party.id}`, payload);
+            else await api.post('/parties/', payload);
             onSaved();
         } catch (err) {
             const msg = err.response?.data?.detail || err.message || 'Save failed.';
@@ -145,7 +145,7 @@ const DeleteConfirm = ({ party, onClose, onDeleted }) => {
     const [loading, setLoading] = useState(false);
     const confirm = async () => {
         setLoading(true);
-        try { await api.delete(`/admin/parties/${party.id}`); onDeleted(); }
+        try { await api.delete(`/parties/${party.id}`); onDeleted(); }
         catch { onClose(); }
     };
     return (
@@ -211,7 +211,7 @@ const LeadersModal = ({ party, onClose }) => {
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const { data } = await api.get(`/admin/parties/${party.id}/leaders`);
+            const { data } = await api.get(`/parties/${party.id}/leaders`);
             setLeaders(Array.isArray(data) ? data : data.leaders ?? []);
         } catch { setLeaders([]); }
         finally { setLoading(false); }
@@ -223,7 +223,7 @@ const LeadersModal = ({ party, onClose }) => {
         e.preventDefault();
         setSaving(true);
         try {
-            await api.post(`/admin/parties/${party.id}/leaders`, newLeader);
+            await api.post(`/parties/${party.id}/leaders`, newLeader);
             setNewLeader({ name: '', position: '', twitter: '' });
             load();
         } catch { /* swallow */ }
@@ -231,7 +231,7 @@ const LeadersModal = ({ party, onClose }) => {
     };
 
     const removeLeader = async (leaderId) => {
-        try { await api.delete(`/admin/parties/${party.id}/leaders/${leaderId}`); load(); }
+        try { await api.delete(`/parties/leaders/${leaderId}`); load(); }
         catch { /* swallow */ }
     };
 
@@ -317,6 +317,20 @@ const PartyManagement = () => {
     }, []);
 
     useEffect(() => { load(); }, [load]);
+
+    const handleSyncWiki = async (party) => {
+        if (!window.confirm(`Fetch info from Wikipedia for "${party.name}"? This will overwrite overview, history, and ideology.`)) return;
+
+        try {
+            showToast('Syncing with Wikipedia...', true);
+            await api.post(`/parties/${party.id}/wiki/sync`);
+            showToast('Sync complete!');
+            load();
+        } catch (err) {
+            const msg = err.response?.data?.detail || 'Wikipedia sync failed.';
+            showToast(msg, false);
+        }
+    };
 
     return (
         <div className="space-y-6">
@@ -421,6 +435,11 @@ const PartyManagement = () => {
                                                 <button onClick={() => setLeadersTarget(party)} title="Manage Leaders"
                                                     className="p-1.5 rounded-lg text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 transition-all">
                                                     <Users className="w-4 h-4" />
+                                                </button>
+                                                {/* Wikipedia Sync */}
+                                                <button onClick={() => handleSyncWiki(party)} title="Sync from Wikipedia"
+                                                    className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all">
+                                                    <Globe className="w-4 h-4" />
                                                 </button>
                                                 {/* Delete */}
                                                 <button onClick={() => setDelTarget(party)} title="Delete"

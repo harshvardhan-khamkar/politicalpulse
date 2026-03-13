@@ -84,6 +84,7 @@ class RedditService:
         """
         from app.models.social_media import RedditPost
         from app.services.sentiment_service import sentiment_analyzer
+        from app.services.alignment_model_service import alignment_model_service
         
         self._init_client()
         
@@ -114,6 +115,11 @@ class RedditService:
                 # Analyze sentiment
                 sentiment = sentiment_analyzer.analyze_sentiment(content)
                 
+                # ML Alignment Prediction
+                alg_res = alignment_model_service.predict_alignment(content)
+                aligned_party = alg_res.get("predicted_alignment", "Unknown")
+                aligned_conf = alg_res.get("alignment_confidence", 0.0)
+                
                 # Create post record
                 posted_at = datetime.fromtimestamp(submission.created_utc)
                 
@@ -128,6 +134,8 @@ class RedditService:
                     language=sentiment['language'],
                     sentiment_label=sentiment['label'],
                     sentiment_score=sentiment['score'],
+                    predicted_alignment=aligned_party,
+                    alignment_confidence=aligned_conf,
                     likes=0,  # Reddit doesn't expose exact likes
                     retweets=0,
                     replies=submission.num_comments,

@@ -11,211 +11,99 @@ logger = logging.getLogger(__name__)
 class SentimentAnalyzer:
     """
     Sentiment analysis service for political social media content
-    Uses language detection and appropriate models
+    Uses language detection, translation (for Hindi), and VADER sentiment.
     """
     
     def __init__(self):
-        self.models_loaded = False
-        self.english_model = None
-        self.hindi_model = None
-        self.detector = None
+        self.analyzer = None
+        self.translator = None
+        self.initialized = False
         
-    def _load_models(self):
-        """Lazy load ML models"""
-        if self.models_loaded:
+    def _init_models(self):
+        """Lazy load VADER and translation models"""
+        if self.initialized:
             return
             
         try:
-            # Try to import transformers (optional dependency for now)
-            from transformers import pipeline
-            import langdetect
+            from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+            from deep_translator import GoogleTranslator
             
-            logger.info("Loading sentiment analysis models...")
-            
-            # English sentiment model
-            self.english_model = pipeline(
-                "sentiment-analysis",
-                model="distilbert-base-uncased-finetuned-sst-2-english"
-            )
-            
-            # For multilingual (Hindi included)
-            # Using a simpler approach for now
-            self.hindi_model = self.english_model  # Fallback
-            
-            self.detector = langdetect
-            self.models_loaded = True
-            
-            logger.info("Sentiment models loaded successfully")
-            
+            self.analyzer = SentimentIntensityAnalyzer()
+            self.translator = GoogleTranslator(source='auto', target='en')
+            self.initialized = True
+            logger.info("VADER Sentiment and Translator initialized successfully")
         except ImportError:
-            logger.warning("Transformers not installed. Using simple sentiment analysis.")
-            self.models_loaded = False
-        except Exception as e:
-            logger.error(f"Error loading sentiment models: {e}")
-            self.models_loaded = False
+            logger.error("Required NLP packages missing. Install: pip install vaderSentiment deep-translator")
+            self.initialized = False
     
     def detect_language(self, text: str) -> str:
         """
-        Detect language of text
-        Returns: ISO language code ('en', 'hi', etc.)
+        Simple heuristic language detection.
+        Returns: 'hi' if Devanagari detected, else 'en'
         """
-        if not text or len(text.strip()) < 10:
-            return "en"  # Default to English for short text
-            
-        try:
-            if self.detector:
-                return self.detector.detect(text)
-            else:
-                # Simple heuristic: check for Devanagari characters
-                if any('\u0900' <= c <= '\u097F' for c in text):
-                    return "hi"
-                return "en"
-        except Exception as e:
-            logger.warning(f"Language detection failed: {e}")
+        if not text:
             return "en"
+        # Check for Devanagari characters
+        if any('\u0900' <= c <= '\u097F' for c in text):
+            return "hi"
+        return "en"
     
     def analyze_sentiment(self, text: str, language: Optional[str] = None) -> Dict[str, any]:
         """
-        Analyze sentiment of text
-        
-        Args:
-            text: Text to analyze
-            language: Optional language code. If None, will be detected
-            
-        Returns:
-            {
-                'label': 'positive'|'negative'|'neutral',
-                'score': float (-1.0 to 1.0),
-                'language': str,
-                'confidence': float (0.0 to 1.0)
-            }
+        Analyze sentiment using VADER.
+        Translates Hindi text to English first for highly accurate VADER scoring.
         """
         if not text or not text.strip():
             return {
                 'label': 'neutral',
                 'score': 0.0,
                 'language': 'unknown',
-                'confidence': 0.0
+                'confidence': 1.0
             }
         
-        # Detect language if not provided
+        self._init_models()
+        
         if not language:
             language = self.detect_language(text)
+            
+        analysis_text = text
         
-        # Try to use ML models if available
-        self._load_models()
-        
-        if self.models_loaded and self.english_model:
-            return self._ml_sentiment(text, language)
+        # Translate to English if text contains Hindi
+        if self.initialized and language == 'hi':
+            try:
+                analysis_text = self.translator.translate(text[:4500]) # Limit to 4500 chars for API
+            except Exception as e:
+                logger.warning(f"Translation failed, falling back to original: {e}")
+                
+        # Get VADER scores
+        if self.initialized and self.analyzer:
+            scores = self.analyzer.polarity_scores(analysis_text)
+            compound = scores['compound']
         else:
-            return self._simple_sentiment(text, language)
-    
-    def _ml_sentiment(self, text: str, language: str) -> Dict[str, any]:
-        """Use ML models for sentiment analysis"""
-        try:
-            # Use appropriate model based on language
-            model = self.english_model  # For now, use English model for all
+            # Absolute worst-case fallback (if packages fail to load)
+            compound = 0.0
             
-            # Get prediction
-            result = model(text[:512])[0]  # Truncate to model limit
-            
-            label = result['label'].lower()
-            confidence = result['score']
-            
-            # Normalize label
-            if 'pos' in label:
-                label = 'positive'
-                score = confidence
-            elif 'neg' in label:
-                label = 'negative'
-                score = -confidence
-            else:
-                label = 'neutral'
-                score = 0.0
-            
-            return {
-                'label': label,
-                'score': round(score, 4),
-                'language': language,
-                'confidence': round(confidence, 4)
-            }
-            
-        except Exception as e:
-            logger.error(f"ML sentiment analysis failed: {e}")
-            return self._simple_sentiment(text, language)
-    
-    def _simple_sentiment(self, text: str, language: str) -> Dict[str, any]:
-        """
-        Simple rule-based sentiment analysis as fallback
-        Uses keyword matching
-        """
-        text_lower = text.lower()
-        
-        # Positive keywords (English + Hindi transliterated)
-        positive_words = {
-            'good', 'great', 'excellent', 'best', 'love', 'amazing', 
-            'wonderful', 'fantastic', 'support', 'victory', 'win',
-            'achha', 'badhia', 'shandar', 'jeet', 'vijay'
-        }
-        
-        # Negative keywords (English + Hindi transliterated)
-        negative_words = {
-            'bad', 'worst', 'hate', 'terrible', 'awful', 'poor',
-            'corrupt', 'failure', 'lose', 'defeat', 'against',
-            'bura', 'ganda', 'harana', 'bhrasht'
-        }
-        
-        # Count occurrences
-        pos_count = sum(1 for word in positive_words if word in text_lower)
-        neg_count = sum(1 for word in negative_words if word in text_lower)
-        
-        # Calculate score
-        total = pos_count + neg_count
-        if total == 0:
-            return {
-                'label': 'neutral',
-                'score': 0.0,
-                'language': language,
-                'confidence': 0.5
-            }
-        
-        score = (pos_count - neg_count) / total
-        
-        if score > 0.2:
+        # Classify based on compound score
+        if compound >= 0.05:
             label = 'positive'
-        elif score < -0.2:
+        elif compound <= -0.05:
             label = 'negative'
         else:
             label = 'neutral'
-        
-        confidence = min(abs(score), 1.0)
-        
+            
         return {
             'label': label,
-            'score': round(score, 4),
+            'score': round(compound, 4),
             'language': language,
-            'confidence': round(confidence, 4)
+            'confidence': round(abs(compound), 4) if label != 'neutral' else 0.5
         }
     
     def batch_analyze(self, texts: list, languages: Optional[list] = None) -> list:
-        """
-        Analyze sentiment for multiple texts
-        
-        Args:
-            texts: List of texts to analyze
-            languages: Optional list of language codes
-            
-        Returns:
-            List of sentiment results
-        """
         results = []
         for i, text in enumerate(texts):
             lang = languages[i] if languages and i < len(languages) else None
-            result = self.analyze_sentiment(text, lang)
-            results.append(result)
-        
+            results.append(self.analyze_sentiment(text, lang))
         return results
-
 
 # Global instance
 sentiment_analyzer = SentimentAnalyzer()
