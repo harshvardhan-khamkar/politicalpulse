@@ -55,7 +55,6 @@ htmlcov/
 *.pth
 *.bin
 *.onnx
-models/
 
 # Frontend
 node_modules/
@@ -65,3 +64,4 @@ dist/
 
 docs/
 ref/
+polipulse_dump.sql/
