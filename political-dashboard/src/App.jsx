@@ -8,12 +8,15 @@ import InsightsPage from './pages/InsightsPage';
 import PartyInfoPage from './pages/PartyInfoPage';
 import TrendingPage from './pages/TrendingPage';
 import ElectionResultsPage from './pages/ElectionResultsPage';
+import EBookPage from './pages/EBookPage';
 import VisualizationsPage from './pages/VisualizationsPage';
 import PollsPage from './pages/PollsPage';
 import PollResultsPage from './pages/PollResultsPage';
 import LocalNewsPage from './pages/LocalNewsPage';
 import GlobalNewsPage from './pages/GlobalNewsPage';
 import PartyDetailPage from './pages/PartyDetailPage';
+import LeaderInfoPage from './pages/LeaderInfoPage';
+import LeaderDetailPage from './pages/LeaderDetailPage';
 import AuthPage from './pages/AuthPage';
 import TopicAnalysisPage from './pages/TopicAnalysisPage';
 import EventsTimelinePage from './pages/EventsTimelinePage';
@@ -26,6 +29,7 @@ import AdminLayout from './layouts/AdminLayout';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import PollManagement from './pages/admin/PollManagement';
 import PartyManagement from './pages/admin/PartyManagement';
+import LeaderManagement from './pages/admin/LeaderManagement';
 import SystemControl from './pages/admin/SystemControl';
 
 function App() {
@@ -47,9 +51,12 @@ function App() {
           <Route path="party-info" element={<PartyInfoPage />} />
           <Route path="party-information" element={<PartyInfoPage />} />
           <Route path="party-information/:partyId" element={<PartyDetailPage />} />
+          <Route path="leader-info" element={<LeaderInfoPage />} />
+          <Route path="leader-info/:leaderId" element={<LeaderDetailPage />} />
 
           {/* Election Data */}
           <Route path="election-results" element={<ElectionResultsPage />} />
+          <Route path="ebook" element={<EBookPage />} />
           <Route path="election-charts" element={<VisualizationsPage />} />
 
           {/* Polls */}
@@ -73,6 +80,7 @@ function App() {
           <Route index element={<AdminDashboard />} />
           <Route path="polls" element={<PollManagement />} />
           <Route path="parties" element={<PartyManagement />} />
+          <Route path="leaders" element={<LeaderManagement />} />
           <Route path="system" element={<SystemControl />} />
         </Route>
       </Routes>

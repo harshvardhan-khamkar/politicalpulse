@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List
 from sqlalchemy import func
 
+from app.services.text_normalization import repair_mojibake
 from app.services.topic_modeling_service import topic_modeling_service
 
 logger = logging.getLogger(__name__)
@@ -80,7 +81,7 @@ class EventCorrelationService:
             if not all_posts:
                 return []
                 
-            texts = [p[0] for p in all_posts if p[0]]
+            texts = [repair_mojibake(p[0]) for p in all_posts if p[0]]
             
             # Use the NMF model to find 3 main topics per window
             topics = topic_modeling_service.extract_topics(texts, num_topics=3, top_n_words=5)
@@ -92,6 +93,7 @@ class EventCorrelationService:
                 topic_sentiments = []
                 for content, score in all_posts:
                     if content and score is not None:
+                        content = repair_mojibake(content)
                         # If post contains topic keywords
                         content_lower = content.lower()
                         if any(kw in content_lower for kw in keywords):

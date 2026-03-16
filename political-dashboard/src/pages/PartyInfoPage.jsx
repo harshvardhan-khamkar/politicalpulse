@@ -3,11 +3,17 @@ import { useNavigate } from 'react-router-dom';
 import { ChevronDown, Loader2, AlertCircle, Users, BarChart2 } from 'lucide-react';
 import api from '../api/api';
 
+const API_BASE = 'http://127.0.0.1:8000';
+
 // ─── Party Card ───────────────────────────────────────────────────────────────
 
 const PartyCard = ({ party, onClick }) => {
     const accent = party.color_hex ?? '#94a3b8';
     const voteShare = Math.min(Number(party.vote_share_percentage ?? 0), 100);
+    const [logoFailed, setLogoFailed] = useState(false);
+    const logoSrc = party.logo_url
+        ? (party.logo_url.startsWith('http') ? party.logo_url : `${API_BASE}${party.logo_url}`)
+        : null;
 
     return (
         <button
@@ -23,13 +29,13 @@ const PartyCard = ({ party, onClick }) => {
                 <div className="flex-1 p-5">
                     {/* Header: logo + name + badge */}
                     <div className="flex items-start gap-3 mb-3">
-                        {party.logo_url ? (
+                        {logoSrc && !logoFailed ? (
                             <div className="w-12 h-12 flex-shrink-0 flex items-center justify-center">
                                 <img
-                                    src={party.logo_url}
+                                    src={logoSrc}
                                     alt={party.name}
                                     className="w-12 h-12 object-contain"
-                                    onError={e => { e.target.parentElement.style.display = 'none'; }}
+                                    onError={() => setLogoFailed(true)}
                                 />
                             </div>
                         ) : (

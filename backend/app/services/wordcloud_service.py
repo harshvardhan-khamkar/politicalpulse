@@ -6,22 +6,40 @@ Supports multilingual text with appropriate fonts
 import io
 import os
 import re
-from typing import Optional
+from dataclasses import dataclass
+from hashlib import sha1
+from threading import Event, RLock
+from typing import Dict, Optional, Tuple
 import logging
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
 from datetime import datetime, timedelta
+
+from app.services.text_normalization import repair_mojibake
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class WordCloudCacheEntry:
+    image_bytes: bytes
+    etag: str
+    cached_at: datetime
+
+
 class WordCloudService:
     """Generate word clouds from social media posts"""
+
+    CACHE_TTL_SECONDS = 60 * 60 * 12
+    CACHE_MAX_ENTRIES = 128
     
     def __init__(self):
         self.stopwords = None
         self.lemmatizer = None
         self.initialized = False
+        self._cache: Dict[Tuple[str, str, str, str, str, int, str, str], WordCloudCacheEntry] = {}
+        self._inflight: Dict[Tuple[str, str, str, str, str, int, str, str], Event] = {}
+        self._cache_lock = RLock()
         
     def _init_nltk(self):
         """Initialize NLTK components explicitly"""
@@ -87,8 +105,8 @@ class WordCloudService:
             logger.error(f"Error initializing NLTK: {e}")
             self.initialized = False
 
-    def clean_text(self, text: str) -> str:
-        """Clean and preprocess text"""
+    def clean_text(self, text: str, language: str = 'en') -> str:
+        """Clean and preprocess text, filtering by language."""
         self._init_nltk()
         
         # Remove URLs
@@ -98,9 +116,17 @@ class WordCloudService:
         text = re.sub(r'@\w+', '', text)
         
         # Remove punctuation and numbers
-        # Preserve: Alphanumeric, Space, Hashtag, Devanagari range, and Zero-Width-Joiners (\u200c, \u200d)
         text = re.sub(r'[^\w\s#\u0900-\u097F\u200C\u200D]', ' ', text)
         text = re.sub(r'\d+', '', text)
+        
+        # Language-specific character filtering:
+        # For English: strip ALL non-ASCII characters to prevent garbled rendering
+        # For Hindi: keep only Devanagari characters (and spaces)
+        if language == 'en':
+            text = re.sub(r'[^\x00-\x7F]+', ' ', text)  # Strip non-ASCII
+        elif language == 'hi':
+            text = re.sub(r'[a-zA-Z]+', ' ', text)  # Strip Latin letters
+        # language == 'all': keep everything
         
         # Lowercase (Safe for Devanagari)
         text = text.lower()
@@ -120,28 +146,160 @@ class WordCloudService:
                 if not clean_w or clean_w in self.stopwords:
                     continue
                 
-                # Minimum length check (2 for English, 1 for Hindi but usually we want at least 2 chars for cloud)
+                # Minimum length check
                 if len(clean_w) < 2:
                     continue
 
-                if is_hindi(word):
+                if is_hindi(clean_w):
                     # Preserve Hindi words as is (no lemmatization)
-                    clean_words.append(word)
+                    clean_words.append(clean_w)
                 elif self.lemmatizer:
                     # Lemmatize English words
-                    clean_words.append(self.lemmatizer.lemmatize(word))
+                    clean_words.append(self.lemmatizer.lemmatize(clean_w))
                 else:
-                    clean_words.append(word)
+                    clean_words.append(clean_w)
                     
             text = ' '.join(clean_words)
         
         return text
+
+    @staticmethod
+    def _fix_encoding(text: str) -> str:
+        return repair_mojibake(text)
+
+    def _build_cache_key(
+        self,
+        party: Optional[str] = None,
+        leader_name: Optional[str] = None,
+        username: Optional[str] = None,
+        platform: Optional[str] = None,
+        source_type: Optional[str] = None,
+        days: int = 30,
+        language: str = 'en',
+        cache_version: Optional[str] = None,
+    ) -> Tuple[str, str, str, str, str, int, str, str]:
+        return (
+            party or "",
+            leader_name or "",
+            username or "",
+            platform or "all",
+            source_type or "all",
+            int(days),
+            language or "all",
+            cache_version or "",
+        )
+
+    def _get_cached_entry_locked(
+        self,
+        cache_key: Tuple[str, str, str, str, str, int, str, str],
+    ) -> Optional[WordCloudCacheEntry]:
+        entry = self._cache.get(cache_key)
+        if not entry:
+            return None
+
+        age_seconds = (datetime.utcnow() - entry.cached_at).total_seconds()
+        if age_seconds <= self.CACHE_TTL_SECONDS:
+            return entry
+
+        self._cache.pop(cache_key, None)
+        return None
+
+    def _store_cache_entry_locked(
+        self,
+        cache_key: Tuple[str, str, str, str, str, int, str, str],
+        image_bytes: bytes,
+    ) -> WordCloudCacheEntry:
+        entry = WordCloudCacheEntry(
+            image_bytes=image_bytes,
+            etag=sha1(image_bytes).hexdigest(),
+            cached_at=datetime.utcnow(),
+        )
+        self._cache[cache_key] = entry
+
+        if len(self._cache) > self.CACHE_MAX_ENTRIES:
+            oldest_key = min(self._cache, key=lambda key: self._cache[key].cached_at)
+            self._cache.pop(oldest_key, None)
+
+        return entry
+
+    def clear_cache(self) -> None:
+        with self._cache_lock:
+            self._cache.clear()
+
+    def get_or_generate_wordcloud(
+        self,
+        db: Session,
+        party: Optional[str] = None,
+        leader_name: Optional[str] = None,
+        username: Optional[str] = None,
+        platform: Optional[str] = None,
+        source_type: Optional[str] = None,
+        days: int = 30,
+        language: str = 'en',
+        cache_version: Optional[str] = None,
+        force_refresh: bool = False,
+    ) -> WordCloudCacheEntry:
+        cache_key = self._build_cache_key(
+            party=party,
+            leader_name=leader_name,
+            username=username,
+            platform=platform,
+            source_type=source_type,
+            days=days,
+            language=language,
+            cache_version=cache_version,
+        )
+
+        if not force_refresh:
+            with self._cache_lock:
+                cached = self._get_cached_entry_locked(cache_key)
+            if cached:
+                return cached
+
+        with self._cache_lock:
+            if not force_refresh:
+                cached = self._get_cached_entry_locked(cache_key)
+                if cached:
+                    return cached
+
+            inflight_event = self._inflight.get(cache_key)
+            should_generate = inflight_event is None
+            if should_generate:
+                inflight_event = Event()
+                self._inflight[cache_key] = inflight_event
+
+        if not should_generate:
+            inflight_event.wait()
+            with self._cache_lock:
+                cached = self._get_cached_entry_locked(cache_key)
+            if cached:
+                return cached
+
+        try:
+            image_bytes = self.generate_wordcloud(
+                db,
+                party=party,
+                leader_name=leader_name,
+                username=username,
+                platform=platform,
+                source_type=source_type,
+                days=days,
+                language=language,
+            )
+            with self._cache_lock:
+                return self._store_cache_entry_locked(cache_key, image_bytes)
+        finally:
+            with self._cache_lock:
+                event = self._inflight.pop(cache_key, None)
+                if event:
+                    event.set()
 
     def generate_wordcloud(
         self,
         db: Session,
         party: Optional[str] = None,
         leader_name: Optional[str] = None,
+        username: Optional[str] = None,
         platform: Optional[str] = None,
         source_type: Optional[str] = None,
         days: int = 30,
@@ -163,12 +321,31 @@ class WordCloudService:
             query = db.query(model).filter(model.posted_at >= cutoff_date)
             if party:
                 query = query.filter(model.party == party)
+            leader_filters = []
             if leader_name:
-                query = query.filter(model.leader_name == leader_name)
+                normalized_name = leader_name.strip().lower()
+                normalized_handle = leader_name.strip().lstrip("@").lower()
+                leader_filters.extend(
+                    [
+                        func.lower(model.leader_name) == normalized_name,
+                        func.lower(model.leader_name) == normalized_handle,
+                        func.lower(model.username) == normalized_handle,
+                    ]
+                )
+            if username:
+                normalized_username = username.strip().lstrip("@").lower()
+                leader_filters.append(func.lower(model.username) == normalized_username)
+            if leader_filters:
+                query = query.filter(or_(*leader_filters))
             if source_type:
                 query = query.filter(model.source_type == source_type)
             if language != 'all':
-                query = query.filter(model.language == language)
+                if language == 'en':
+                    query = query.filter(
+                        or_(model.language == language, model.language.is_(None), model.language == "")
+                    )
+                else:
+                    query = query.filter(model.language == language)
             return query.all()
 
         if platform == "twitter":
@@ -185,8 +362,8 @@ class WordCloudService:
             img.save(buf, format='PNG')
             return buf.getvalue()
         
-        combined_text = ' '.join([post.content for post in posts if post.content])
-        cleaned_text = self.clean_text(combined_text)
+        combined_text = ' '.join([repair_mojibake(post.content) for post in posts if post.content])
+        cleaned_text = self.clean_text(combined_text, language=language)
         
         if not cleaned_text.strip():
             logger.warning("No text remaining after cleaning")
@@ -200,8 +377,8 @@ class WordCloudService:
         if language == 'hi' or language == 'all':
             # For Hindi, try to use Windows Native Devanagari fonts so text doesn't render as boxes
             possible_fonts = [
-                'C:/Windows/Fonts/Nirmala.ttc', # Correct Windows TrueType Collection format
-                'C:/Windows/Fonts/Nirmala.ttf',
+                'C:/Windows/Fonts/Nirmala.ttf',  # Most common on Windows
+                'C:/Windows/Fonts/Nirmala.ttc',
                 'C:/Windows/Fonts/mangal.ttf',
                 'C:/Windows/Fonts/aparaj.ttf',
                 'C:/Windows/Fonts/NotoSansDevanagari-Regular.ttf', # Linux WSL fallback
@@ -210,6 +387,7 @@ class WordCloudService:
             for font in possible_fonts:
                 if font and os.path.exists(font):
                     font_path = font
+                    logger.info(f"Using Devanagari font: {font_path}")
                     break
         
         # Generate word frequencies ourselves to ensure correct Hindi tokenization

@@ -1,5 +1,8 @@
 import logging
+import os
 from typing import List, Dict
+from pathlib import Path
+
 import torch
 
 logger = logging.getLogger(__name__)
@@ -15,12 +18,57 @@ class TransformerSentimentAnalyzer:
         self.pipeline = None
         self._initialize()
 
+    @property
+    def _cache_dir(self) -> Path:
+        return Path(__file__).resolve().parents[2] / ".hf_cache"
+
     def _initialize(self):
         try:
-            from transformers import pipeline
+            from transformers import (
+                AutoModelForSequenceClassification,
+                AutoTokenizer,
+                pipeline,
+            )
+
+            os.environ.setdefault("DISABLE_SAFETENSORS_CONVERSION", "1")
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
             # Use GPU if available
             device = 0 if torch.cuda.is_available() else -1
-            self.pipeline = pipeline("sentiment-analysis", model=self.model_name, device=device)
+
+            tokenizer = None
+            model = None
+
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(
+                    self.model_name,
+                    cache_dir=str(self._cache_dir),
+                    local_files_only=True,
+                )
+                model = AutoModelForSequenceClassification.from_pretrained(
+                    self.model_name,
+                    cache_dir=str(self._cache_dir),
+                    local_files_only=True,
+                    use_safetensors=False,
+                )
+                logger.info("Loaded cached sentiment model for offline inference")
+            except Exception:
+                logger.info("Cached sentiment model not found, downloading from Hugging Face")
+                tokenizer = AutoTokenizer.from_pretrained(
+                    self.model_name,
+                    cache_dir=str(self._cache_dir),
+                )
+                model = AutoModelForSequenceClassification.from_pretrained(
+                    self.model_name,
+                    cache_dir=str(self._cache_dir),
+                    use_safetensors=False,
+                )
+
+            self.pipeline = pipeline(
+                "sentiment-analysis",
+                model=model,
+                tokenizer=tokenizer,
+                device=device,
+            )
             logger.info(f"Loaded Sentiment Transformer: {self.model_name}")
         except ImportError:
             logger.error("HuggingFace 'transformers' or 'torch' not installed. Install via requirements_ml.txt")

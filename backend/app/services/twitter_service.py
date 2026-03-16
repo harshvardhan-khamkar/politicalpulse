@@ -7,11 +7,15 @@ import asyncio
 import os
 import re
 import random
+from dataclasses import dataclass
 from collections import Counter
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from threading import RLock
+from typing import Any, Dict, List, Optional, Tuple
 import logging
 from sqlalchemy.orm import Session
+
+from app.services.text_normalization import repair_mojibake
 
 logger = logging.getLogger(__name__)
 
@@ -50,13 +54,23 @@ HANDLE_TO_PARTY = {
 _HASHTAG_RE = re.compile(r"#(\w+)", re.UNICODE)
 
 
+@dataclass
+class LiveTrendCacheEntry:
+    payload: Dict[str, Any]
+    cached_at: datetime
+
+
 class TwitterService:
     """Twitter scraping service using Twikit"""
+
+    LIVE_TRENDS_CACHE_TTL_SECONDS = 60 * 5
 
     def __init__(self, cookies_path: str = "cookies.json"):
         self.cookies_path = cookies_path
         self.client = None
         self.initialized = False
+        self._live_trends_cache: Dict[Tuple[str, str, int, bool], LiveTrendCacheEntry] = {}
+        self._live_trends_lock = RLock()
 
     async def _init_client(self):
         """Initialize Twikit client with cookies"""
@@ -119,6 +133,204 @@ class TwitterService:
         lang_fragment = "" if language == "all" else f" lang:{language}"
         return f"{tag}{lang_fragment}{self._build_since_fragment(since_days)}"
 
+    @staticmethod
+    def _normalize_trend_location(location_name: Optional[str]) -> str:
+        return (location_name or "").strip().casefold()
+
+    @staticmethod
+    def _extract_numeric_volume(value: Any) -> Optional[int]:
+        if isinstance(value, int):
+            return value
+        if value is None:
+            return None
+
+        text = str(value).strip().lower().replace(",", "")
+        match = re.search(r"(\d+(?:\.\d+)?)\s*([km]?)", text)
+        if not match:
+            return None
+
+        number = float(match.group(1))
+        suffix = match.group(2)
+        multiplier = 1_000 if suffix == "k" else 1_000_000 if suffix == "m" else 1
+        return int(number * multiplier)
+
+    def _resolve_trends_location(
+        self,
+        locations: List[Any],
+        country_code: str = "IN",
+        location_name: Optional[str] = None,
+    ) -> Optional[Any]:
+        normalized_country = (country_code or "").strip().upper()
+        normalized_location = self._normalize_trend_location(location_name)
+
+        if normalized_location:
+            for location in locations:
+                if self._normalize_trend_location(getattr(location, "name", "")) != normalized_location:
+                    continue
+                location_country_code = (getattr(location, "country_code", "") or "").upper()
+                if normalized_country and location_country_code != normalized_country:
+                    continue
+                return location
+
+        country_matches = [
+            location
+            for location in locations
+            if not normalized_country or (getattr(location, "country_code", "") or "").upper() == normalized_country
+        ]
+        if not country_matches:
+            return None
+
+        for location in country_matches:
+            place_type = getattr(location, "placeType", {}) or {}
+            if str(place_type.get("name", "")).casefold() == "country":
+                return location
+            if self._normalize_trend_location(getattr(location, "name", "")) == self._normalize_trend_location(
+                getattr(location, "country", "")
+            ):
+                return location
+
+        return country_matches[0]
+
+    def _get_cached_live_trends(
+        self,
+        cache_key: Tuple[str, str, int, bool],
+    ) -> Optional[Dict[str, Any]]:
+        with self._live_trends_lock:
+            entry = self._live_trends_cache.get(cache_key)
+            if not entry:
+                return None
+
+            age_seconds = (datetime.utcnow() - entry.cached_at).total_seconds()
+            if age_seconds > self.LIVE_TRENDS_CACHE_TTL_SECONDS:
+                self._live_trends_cache.pop(cache_key, None)
+                return None
+
+            return entry.payload
+
+    def _store_cached_live_trends(
+        self,
+        cache_key: Tuple[str, str, int, bool],
+        payload: Dict[str, Any],
+    ) -> None:
+        with self._live_trends_lock:
+            self._live_trends_cache[cache_key] = LiveTrendCacheEntry(
+                payload=payload,
+                cached_at=datetime.utcnow(),
+            )
+
+    @staticmethod
+    def _build_live_trend_item(
+        name: str,
+        volume: Optional[int],
+        url: Optional[str] = None,
+        query: Optional[str] = None,
+        grouped_trends: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        return {
+            "hashtag": name,
+            "count": volume or 0,
+            "score": volume or 0,
+            "volume_label": f"{volume:,} posts" if volume else "Live trend",
+            "tweet_volume": volume,
+            "url": url,
+            "query": query,
+            "grouped_trends": grouped_trends or [],
+            "top_party": None,
+            "party_distribution": {},
+        }
+
+    async def get_live_trending_hashtags(
+        self,
+        country_code: str = "IN",
+        location_name: Optional[str] = None,
+        count: int = 15,
+        hashtags_only: bool = True,
+        use_cache: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Retrieve live trending items directly from Twitter/X.
+
+        Defaults to India-level trends when possible.
+        """
+        await self._init_client()
+
+        normalized_country = (country_code or "IN").strip().upper()
+        normalized_location = self._normalize_trend_location(location_name)
+        cache_key = (normalized_country, normalized_location, int(count), bool(hashtags_only))
+
+        if use_cache:
+            cached = self._get_cached_live_trends(cache_key)
+            if cached:
+                return cached
+
+        live_items: List[Dict[str, Any]] = []
+        resolved_location_label = None
+        as_of = None
+
+        locations = await self.client.get_available_locations()
+        location = self._resolve_trends_location(
+            locations,
+            country_code=normalized_country,
+            location_name=location_name,
+        )
+
+        if location is not None:
+            place_trends = await self.client.get_place_trends(location.woeid)
+            as_of = place_trends.get("as_of")
+            resolved_location_label = location.name
+            for trend in place_trends.get("trends", []):
+                name = getattr(trend, "name", "") or ""
+                if hashtags_only and not name.startswith("#"):
+                    continue
+                live_items.append(
+                    self._build_live_trend_item(
+                        name=name,
+                        volume=self._extract_numeric_volume(getattr(trend, "tweet_volume", None)),
+                        url=getattr(trend, "url", None),
+                        query=getattr(trend, "query", None),
+                    )
+                )
+
+        if len(live_items) < count:
+            general_trends = await self.client.get_trends(
+                "trending",
+                count=max(count * 3, 30),
+                retry=False,
+                additional_request_params={"candidate_source": "trends"},
+            )
+            for trend in general_trends:
+                name = getattr(trend, "name", "") or ""
+                if hashtags_only and not name.startswith("#"):
+                    continue
+                if any(existing["hashtag"].casefold() == name.casefold() for existing in live_items):
+                    continue
+                live_items.append(
+                    self._build_live_trend_item(
+                        name=name,
+                        volume=self._extract_numeric_volume(getattr(trend, "tweets_count", None)),
+                        grouped_trends=getattr(trend, "grouped_trends", None),
+                    )
+                )
+
+        live_items = live_items[:count]
+        total_items = len(live_items)
+        for index, item in enumerate(live_items):
+            if not item["score"]:
+                item["score"] = max(total_items - index, 1)
+
+        payload = {
+            "source": "twitter_live",
+            "is_live": True,
+            "location": resolved_location_label or normalized_country,
+            "as_of": as_of,
+            "hashtags": live_items,
+        }
+
+        if use_cache:
+            self._store_cached_live_trends(cache_key, payload)
+
+        return payload
+
     # ─── Core scrape loop ────────────────────────────────────────────────────
 
     async def _scrape_queries(
@@ -172,6 +384,7 @@ class TwitterService:
                         content = getattr(tweet, "text", "") or getattr(tweet, "full_text", "")
                         if not content:
                             continue
+                        content = repair_mojibake(content)
 
                         user_obj = getattr(tweet, "user", None)
                         screen_name = (getattr(user_obj, "screen_name", "") or "").strip()

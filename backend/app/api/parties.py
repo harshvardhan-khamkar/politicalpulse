@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Request
 from fastapi.responses import Response
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
@@ -100,6 +101,49 @@ def _get_party_eci_chart_url(party: Party) -> Optional[str]:
     if party.eci_chart_image_data:
         return f"/parties/{party.id}/eci-chart"
     return None
+
+
+def _get_party_wordcloud_version(
+    db: Session,
+    party: Party,
+    platform: str = "twitter",
+    source_type: Optional[str] = "political",
+    days: int = 365,
+) -> str:
+    """Return a stable cache token that changes when the backing post set changes."""
+    cutoff = datetime.now() - timedelta(days=days)
+    party_key = _resolve_party_wordcloud_key(
+        db,
+        party,
+        platform=platform,
+        source_type=source_type,
+        days=days,
+    )
+
+    if platform == "twitter":
+        query = db.query(func.max(TwitterPost.posted_at)).filter(
+            TwitterPost.party == party_key,
+            TwitterPost.posted_at >= cutoff,
+        )
+        if source_type:
+            query = query.filter(TwitterPost.source_type == source_type)
+        latest_posted_at = query.scalar()
+    elif platform == "reddit":
+        query = db.query(func.max(RedditPost.posted_at)).filter(
+            RedditPost.party == party_key,
+            RedditPost.posted_at >= cutoff,
+        )
+        if source_type:
+            query = query.filter(RedditPost.source_type == source_type)
+        latest_posted_at = query.scalar()
+    else:
+        latest_posted_at = None
+
+    version_source = latest_posted_at or party.updated_at or party.created_at
+    if not version_source:
+        return "0"
+
+    return str(int(version_source.timestamp()))
 
 
 # ========== Party Endpoints ==========
@@ -258,6 +302,14 @@ def get_party_wiki(party_id: int, db: Session = Depends(get_db)):
             detail=f"Party with ID {party_id} not found",
         )
 
+    wordcloud_version = _get_party_wordcloud_version(
+        db,
+        party,
+        platform="twitter",
+        source_type="political",
+        days=365,
+    )
+
     return {
         "id": party.id,
         "name": party.name,
@@ -279,10 +331,10 @@ def get_party_wiki(party_id: int, db: Session = Depends(get_db)):
         "has_logo_image": bool(party.logo_image_data),
         "has_eci_chart_image": bool(party.eci_chart_image_data),
         "wordcloud_image_url_en": (
-            f"/parties/{party.id}/wordcloud?platform=twitter&source_type=political&days=365&language=en"
+            f"/parties/{party.id}/wordcloud?platform=twitter&source_type=political&days=365&language=en&v={wordcloud_version}"
         ),
         "wordcloud_image_url_hi": (
-            f"/parties/{party.id}/wordcloud?platform=twitter&source_type=political&days=365&language=hi"
+            f"/parties/{party.id}/wordcloud?platform=twitter&source_type=political&days=365&language=hi&v={wordcloud_version}"
         ),
     }
 
@@ -452,11 +504,13 @@ def get_party_eci_chart_image(party_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{party_id}/wordcloud")
 def get_party_wordcloud(
+    request: Request,
     party_id: int,
     platform: str = Query("twitter", pattern="^(twitter|reddit)$"),
     source_type: str = Query("political", pattern="^(political|public|all)$"),
     days: int = Query(365, ge=1, le=3650),
     language: str = Query("all", pattern="^(all|en|hi)$"),
+    v: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
     """Generate and return a party wordcloud image (PNG)."""
@@ -475,16 +529,26 @@ def get_party_wordcloud(
         source_type=source_filter,
         days=days,
     )
-    image_bytes = wordcloud_service.generate_wordcloud(
+    cache_entry = wordcloud_service.get_or_generate_wordcloud(
         db,
         party=party_key,
         platform=platform,
         source_type=source_filter,
         days=days,
         language=language,
+        cache_version=v,
     )
+    etag = f"\"{cache_entry.etag}\""
+    cache_control = "public, max-age=86400, immutable" if v else "public, max-age=3600"
+    headers = {
+        "Cache-Control": cache_control,
+        "ETag": etag,
+    }
 
-    return Response(content=image_bytes, media_type="image/png")
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+
+    return Response(content=cache_entry.image_bytes, media_type="image/png", headers=headers)
 
 
 @router.put("/{party_id}", response_model=PartyResponse)

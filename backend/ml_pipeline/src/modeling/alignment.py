@@ -16,7 +16,7 @@ class AlignmentClassifier:
     
     def __init__(self, max_features: int = 5000):
         self.vectorizer = TfidfVectorizer(max_features=max_features, ngram_range=(1, 2))
-        self.classifier = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+        self.classifier = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=1)
         self.is_trained = False
 
     def train(self, texts: List[str], labels: List[str], test_size: float = 0.2):

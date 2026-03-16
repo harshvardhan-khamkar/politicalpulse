@@ -1,12 +1,14 @@
 from datetime import datetime, timedelta
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
-from sqlalchemy import and_, desc
+from sqlalchemy import and_, desc, func, or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.social_media import RedditPost, SentimentData, TwitterPost
+from app.services.text_normalization import repair_mojibake
 from app.schemas.social_media import (
     SentimentDataCreate,
     SentimentDataResponse,
@@ -15,6 +17,7 @@ from app.schemas.social_media import (
 )
 
 router = APIRouter(prefix="/social", tags=["Social Media"])
+logger = logging.getLogger(__name__)
 
 
 def _get_post_model(platform: str):
@@ -30,7 +33,7 @@ def _serialize_post(post: Any, platform: str) -> Dict[str, Any]:
         "id": post.id,
         "platform": platform,
         "post_id": post.post_id,
-        "content": post.content,
+        "content": repair_mojibake(post.content),
         "leader_name": post.leader_name,
         "party": post.party,
         "username": post.username,
@@ -55,6 +58,7 @@ def _build_platform_query(
     cutoff_date: datetime,
     party: Optional[str] = None,
     leader_name: Optional[str] = None,
+    username: Optional[str] = None,
     language: Optional[str] = None,
     sentiment_label: Optional[str] = None,
     source_type: Optional[str] = None,
@@ -62,8 +66,22 @@ def _build_platform_query(
     query = db.query(model).filter(model.posted_at >= cutoff_date)
     if party:
         query = query.filter(model.party == party)
+    leader_filters = []
     if leader_name:
-        query = query.filter(model.leader_name == leader_name)
+        normalized_name = leader_name.strip().lower()
+        normalized_handle = leader_name.strip().lstrip("@").lower()
+        leader_filters.extend(
+            [
+                func.lower(model.leader_name) == normalized_name,
+                func.lower(model.leader_name) == normalized_handle,
+                func.lower(model.username) == normalized_handle,
+            ]
+        )
+    if username:
+        normalized_username = username.strip().lstrip("@").lower()
+        leader_filters.append(func.lower(model.username) == normalized_username)
+    if leader_filters:
+        query = query.filter(or_(*leader_filters))
     if language:
         query = query.filter(model.language == language)
     if sentiment_label:
@@ -90,6 +108,7 @@ def create_social_post(post: SocialPostCreate, db: Session = Depends(get_db)):
 
     payload = post.dict()
     payload.pop("platform")
+    payload["content"] = repair_mojibake(payload.get("content"))
 
     if post.platform == "twitter":
         payload.pop("subreddit", None)
@@ -110,6 +129,7 @@ def get_social_posts(
     source_type: Optional[str] = Query(None, pattern="^(political|public)$"),
     party: Optional[str] = None,
     leader_name: Optional[str] = None,
+    username: Optional[str] = None,
     language: Optional[str] = None,
     sentiment_label: Optional[str] = None,
     days: int = Query(7, ge=1, le=365, description="Days of history"),
@@ -129,6 +149,7 @@ def get_social_posts(
                 cutoff_date,
                 party=party,
                 leader_name=leader_name,
+                username=username,
                 language=language,
                 sentiment_label=sentiment_label,
                 source_type=source_type,
@@ -148,6 +169,7 @@ def get_social_posts(
             cutoff_date,
             party=party,
             leader_name=leader_name,
+            username=username,
             language=language,
             sentiment_label=sentiment_label,
             source_type=source_type,
@@ -163,6 +185,7 @@ def get_social_posts(
             cutoff_date,
             party=party,
             leader_name=leader_name,
+            username=username,
             language=language,
             sentiment_label=sentiment_label,
             source_type=source_type,
@@ -302,24 +325,71 @@ def get_latest_sentiment(
 
 
 @router.get("/trending/hashtags")
-def get_trending_hashtags(
+async def get_trending_hashtags(
     days: int = Query(1, ge=1, le=30, description="Days to look back"),
     limit: int = Query(15, ge=5, le=50, description="Number of hashtags to return"),
     party: Optional[str] = None,
     language: Optional[str] = None,
     source_type: Optional[str] = Query(None, pattern="^(political|public)$"),
+    live: bool = Query(False, description="When true, fetch live Twitter/X trends instead of DB-ranked hashtags."),
+    country_code: str = Query("IN", min_length=2, max_length=2, description="Country code for live Twitter trends."),
+    location_name: Optional[str] = Query(None, description="Optional location name for live Twitter place trends."),
+    hashtags_only: bool = Query(True, description="Only return names beginning with # for live Twitter trends."),
     db: Session = Depends(get_db),
 ):
     """
-    Get trending hashtags extracted from stored tweets.
+    Get trending hashtags.
 
-    Parses #tag tokens from tweet content and ranks by:
+    Modes:
+    - live=false: extract from stored tweets in the local DB
+    - live=true: fetch live trends directly from Twitter/X and fall back to DB data if needed
+
+    Stored-tweet ranking parses #tag tokens from tweet content and ranks by:
     - frequency (count of tweets containing the tag)
     - engagement (likes + retweets + replies)
-
-    Returns party distribution to show which parties use each tag.
     """
     from app.services.twitter_service import twitter_service
+
+    if live:
+        try:
+            live_payload = await twitter_service.get_live_trending_hashtags(
+                country_code=country_code,
+                location_name=location_name,
+                count=limit,
+                hashtags_only=hashtags_only,
+            )
+            live_payload.update(
+                {
+                    "period_days": None,
+                    "party_filter": None,
+                    "language_filter": None,
+                    "count": len(live_payload.get("hashtags", [])),
+                    "fallback_reason": None,
+                }
+            )
+            return live_payload
+        except Exception as exc:
+            logger.warning(f"Live Twitter trends unavailable, falling back to stored hashtags: {exc}")
+            trending = twitter_service.get_trending_hashtags(
+                db,
+                days=days,
+                limit=limit,
+                party=party,
+                language=language,
+                source_type=source_type,
+            )
+            return {
+                "source": "stored_tweets_fallback",
+                "is_live": False,
+                "location": None,
+                "period_days": days,
+                "party_filter": party,
+                "language_filter": language,
+                "count": len(trending),
+                "hashtags": trending,
+                "fallback_reason": str(exc),
+            }
+
     trending = twitter_service.get_trending_hashtags(
         db,
         days=days,
@@ -329,11 +399,15 @@ def get_trending_hashtags(
         source_type=source_type,
     )
     return {
+        "source": "stored_tweets",
+        "is_live": False,
+        "location": None,
         "period_days": days,
         "party_filter": party,
         "language_filter": language,
         "count": len(trending),
         "hashtags": trending,
+        "fallback_reason": None,
     }
 
 
@@ -367,7 +441,7 @@ def get_trending_topics(
                 "leader_name": post.leader_name,
                 "party": post.party,
                 "source_type": post.source_type,
-                "content": post.content[:200],
+                "content": repair_mojibake(post.content)[:200],
                 "engagement": (post.likes or 0) + (post.retweets or 0) + (post.replies or 0) + (post.score or 0),
                 "posted_at": post.posted_at,
                 "url": post.url,

@@ -17,7 +17,9 @@ import {
     LineChart,
     ShieldCheck,
     TrendingUp,
-    Twitter
+    Twitter,
+    Users,
+    BookOpen
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -40,12 +42,14 @@ const Sidebar = () => {
                 { to: '/trending', icon: TrendingUp, label: 'Trending Topics' },
                 { to: '/analytics', icon: PieChart, label: 'Insights' },
                 { to: '/party-info', icon: Megaphone, label: 'Party Information' },
+                { to: '/leader-info', icon: Users, label: 'Leader Information' },
             ]
         },
         {
             title: "Election Data",
             items: [
                 { to: '/election-results', icon: Vote, label: 'Election Results' },
+                { to: '/ebook', icon: BookOpen, label: 'E-Book' },
                 { to: '/election-charts', icon: LineChart, label: 'Visualizations' },
             ]
         },

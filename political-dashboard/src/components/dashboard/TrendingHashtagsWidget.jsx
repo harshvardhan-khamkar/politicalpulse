@@ -1,8 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Hash, TrendingUp, RefreshCw, Flame } from 'lucide-react';
+import { RefreshCw, Flame } from 'lucide-react';
 import api from '../../api/api';
-
-// ─── Party color map ──────────────────────────────────────────────────────────
 
 const PARTY_COLORS = {
     BJP: 'bg-orange-100 text-orange-700 border-orange-200',
@@ -15,47 +13,46 @@ const PARTY_COLORS = {
 };
 
 const BAR_COLORS = {
-    BJP: 'bg-orange-400', INC: 'bg-blue-400', AAP: 'bg-cyan-400',
-    SP: 'bg-red-400', TMC: 'bg-green-400', BSP: 'bg-sky-400',
+    BJP: 'bg-orange-400',
+    INC: 'bg-blue-400',
+    AAP: 'bg-cyan-400',
+    SP: 'bg-red-400',
+    TMC: 'bg-green-400',
+    BSP: 'bg-sky-400',
     CPIM: 'bg-rose-400',
 };
 
-// ─── Day filter buttons ───────────────────────────────────────────────────────
-
-const DAY_OPTIONS = [
-    { label: '1D', value: 1 },
-    { label: '7D', value: 7 },
-    { label: '30D', value: 30 },
-];
-
-// ─── Single hashtag row ───────────────────────────────────────────────────────
-
-const HashtagRow = ({ item, rank, maxCount, compact }) => {
-    const pct = maxCount > 0 ? Math.round((item.count / maxCount) * 100) : 0;
+const HashtagRow = ({ item, rank, maxScore, compact }) => {
+    const score = item.score ?? item.count ?? 0;
+    const pct = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
     const barColor = BAR_COLORS[item.top_party] || 'bg-gray-400';
-    const partyBadge = item.top_party ? (PARTY_COLORS[item.top_party] || 'bg-gray-100 text-gray-600 border-gray-200') : null;
+    const partyBadge = item.top_party
+        ? (PARTY_COLORS[item.top_party] || 'bg-gray-100 text-gray-600 border-gray-200')
+        : null;
+    const metricLabel = item.volume_label || (item.count ? item.count.toLocaleString() : null);
 
-    return (
-        <div className={`group flex items-center gap-3 rounded-xl hover:bg-gray-50 transition-colors cursor-pointer ${compact ? 'py-1.5 px-2' : 'py-2.5 px-3'}`}>
-            {/* Rank */}
+    const content = (
+        <>
             <span className={`text-[10px] font-bold w-4 text-center flex-shrink-0 ${rank <= 3 ? 'text-amber-500' : 'text-gray-300'}`}>
                 {rank <= 3 ? ['🥇', '🥈', '🥉'][rank - 1] : rank}
             </span>
 
-            {/* Hashtag + bar */}
             <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-2">
-                    <span className={`font-semibold text-gray-800 truncate ${compact ? 'text-xs' : 'text-sm'}`}>{item.hashtag}</span>
+                    <span className={`font-semibold text-gray-800 truncate ${compact ? 'text-xs' : 'text-sm'}`}>
+                        {item.hashtag}
+                    </span>
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                         {partyBadge && (
                             <span className={`text-[8px] font-extrabold px-1 py-0 rounded-full border ${partyBadge}`}>
                                 {item.top_party}
                             </span>
                         )}
-                        {!compact && <span className="text-xs text-gray-400 font-medium">{item.count.toLocaleString()}</span>}
+                        {!compact && metricLabel && (
+                            <span className="text-xs text-gray-400 font-medium">{metricLabel}</span>
+                        )}
                     </div>
                 </div>
-                {/* Progress bar - hide if compact */}
                 {!compact && (
                     <div className="h-1 bg-gray-100 rounded-full overflow-hidden mt-1">
                         <div
@@ -65,48 +62,92 @@ const HashtagRow = ({ item, rank, maxCount, compact }) => {
                     </div>
                 )}
             </div>
+        </>
+    );
+
+    if (item.url) {
+        return (
+            <a
+                href={item.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`group flex items-center gap-3 rounded-xl hover:bg-gray-50 transition-colors ${compact ? 'py-1.5 px-2' : 'py-2.5 px-3'}`}
+            >
+                {content}
+            </a>
+        );
+    }
+
+    return (
+        <div className={`group flex items-center gap-3 rounded-xl hover:bg-gray-50 transition-colors ${compact ? 'py-1.5 px-2' : 'py-2.5 px-3'}`}>
+            {content}
         </div>
     );
 };
 
-// ─── Widget ───────────────────────────────────────────────────────────────────
-
 const TrendingHashtagsWidget = ({ className = '', compact = false }) => {
-    const [days, setDays] = useState(1);
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [lastUpdated, setLastUpdated] = useState(null);
     const [error, setError] = useState(null);
+    const [sourceMeta, setSourceMeta] = useState({
+        source: null,
+        isLive: false,
+        location: 'India',
+        fallbackReason: null,
+    });
 
     const fetch = useCallback(async () => {
         setLoading(true);
         setError(null);
         try {
             const res = await api.get('/social/trending/hashtags', {
-                params: { days, limit: compact ? 8 : 15 }
+                params: {
+                    live: true,
+                    limit: compact ? 8 : 15,
+                    country_code: 'IN',
+                    hashtags_only: true,
+                    days: 1,
+                },
             });
             setData(res.data?.hashtags || []);
+            setSourceMeta({
+                source: res.data?.source || null,
+                isLive: Boolean(res.data?.is_live),
+                location: res.data?.location || 'India',
+                fallbackReason: res.data?.fallback_reason || null,
+            });
             setLastUpdated(new Date());
         } catch (e) {
-            setError('Could not load trending hashtags.');
+            setError('Could not load Twitter trending hashtags.');
             setData([]);
+            setSourceMeta({
+                source: null,
+                isLive: false,
+                location: 'India',
+                fallbackReason: null,
+            });
         } finally {
             setLoading(false);
         }
-    }, [days, compact]);
+    }, [compact]);
 
-    // Auto-refresh every 5 minutes
     useEffect(() => {
         fetch();
         const interval = setInterval(fetch, 300_000);
         return () => clearInterval(interval);
     }, [fetch]);
 
-    const maxCount = data.length > 0 ? data[0].count : 1;
+    const maxScore = data.length > 0
+        ? Math.max(...data.map((item) => item.score ?? item.count ?? 0), 1)
+        : 1;
+
+    const sourceLabel = sourceMeta.isLive
+        ? `Live on Twitter/X${sourceMeta.location ? ` · ${sourceMeta.location}` : ''}`
+        : 'Fallback from stored tweets';
 
     return (
         <div className={`${compact ? 'bg-transparent border-none shadow-none' : 'bg-white rounded-2xl border border-gray-100 shadow-sm'} flex flex-col ${className}`}>
-            {/* Header */}
             <div className={`border-b border-gray-50 flex items-center justify-between ${compact ? 'px-2 py-2' : 'px-4 py-4'}`}>
                 <div className="flex items-center gap-2">
                     <div className={`rounded-lg bg-gradient-to-br from-pink-500 to-rose-600 flex items-center justify-center flex-shrink-0 ${compact ? 'w-6 h-6' : 'w-8 h-8'}`}>
@@ -114,35 +155,22 @@ const TrendingHashtagsWidget = ({ className = '', compact = false }) => {
                     </div>
                     <div>
                         <h3 className={`font-bold text-gray-900 ${compact ? 'text-xs' : 'text-sm'}`}>Trending</h3>
-                        {!compact && <p className="text-[10px] text-gray-400">Latest political hashtags</p>}
+                        {!compact && <p className="text-[10px] text-gray-400">{sourceLabel}</p>}
                     </div>
                 </div>
 
-                <div className="flex items-center gap-1.5">
-                    {/* Day filter - simpler in compact */}
-                    {!compact ? (
-                        <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
-                            {DAY_OPTIONS.map(o => (
-                                <button
-                                    key={o.value}
-                                    onClick={() => setDays(o.value)}
-                                    className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all
-                      ${days === o.value ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
-                                >
-                                    {o.label}
-                                </button>
-                            ))}
-                        </div>
-                    ) : (
-                        <select
-                            value={days}
-                            onChange={(e) => setDays(parseInt(e.target.value))}
-                            className="bg-gray-100 border-none rounded text-[10px] font-bold text-gray-500 py-0.5 px-1 outline-none"
+                <div className="flex items-center gap-2">
+                    {!compact && (
+                        <span
+                            className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide ${
+                                sourceMeta.isLive
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                    : 'bg-amber-50 text-amber-700 border border-amber-200'
+                            }`}
                         >
-                            {DAY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                        </select>
+                            {sourceMeta.isLive ? 'Live' : 'Fallback'}
+                        </span>
                     )}
-                    {/* Refresh */}
                     <button
                         onClick={fetch}
                         disabled={loading}
@@ -153,7 +181,12 @@ const TrendingHashtagsWidget = ({ className = '', compact = false }) => {
                 </div>
             </div>
 
-            {/* Content */}
+            {!compact && sourceMeta.fallbackReason && (
+                <div className="px-4 py-2 text-[10px] text-amber-700 bg-amber-50 border-b border-amber-100">
+                    Live Twitter trends were unavailable, so this list is using stored tweets right now.
+                </div>
+            )}
+
             <div className={`flex-1 ${compact ? 'px-1 py-1' : 'px-2 py-2'}`}>
                 {loading && (
                     <div className="flex flex-col gap-1 py-1">
@@ -176,20 +209,25 @@ const TrendingHashtagsWidget = ({ className = '', compact = false }) => {
 
                 {!loading && !error && data.length === 0 && (
                     <div className="flex flex-col items-center justify-center py-6 text-center">
-                        <p className="text-[10px] text-gray-400">No data yet.</p>
+                        <p className="text-[10px] text-gray-400">No trending hashtags available right now.</p>
                     </div>
                 )}
 
                 {!loading && !error && data.length > 0 && (
                     <div>
                         {data.map((item, i) => (
-                            <HashtagRow key={item.hashtag} item={item} rank={i + 1} maxCount={maxCount} compact={compact} />
+                            <HashtagRow
+                                key={`${item.hashtag}-${i}`}
+                                item={item}
+                                rank={i + 1}
+                                maxScore={maxScore}
+                                compact={compact}
+                            />
                         ))}
                     </div>
                 )}
             </div>
 
-            {/* Footer */}
             {lastUpdated && !loading && !compact && (
                 <div className="px-4 py-2.5 border-t border-gray-50 text-[10px] text-gray-300">
                     Updated {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

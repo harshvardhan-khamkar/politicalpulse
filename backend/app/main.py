@@ -1,16 +1,49 @@
 import logging
+from threading import Thread
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.config import settings
-from app.database import Base, engine
-from app.api import auth, elections, polls, parties, social_media, predictions_news, admin, nlp_analysis, events
+from app.database import Base, SessionLocal, engine
+from app.api import auth, elections, polls, parties, social_media, predictions_news, admin, nlp_analysis, events, leaders
 from app.models.users import AppUser  # noqa: F401 - ensures table metadata is registered
 from app.security import ensure_admin_user_exists
+from app.services.advanced_ml_service import advanced_ml_service
 
 logger = logging.getLogger(__name__)
+
+
+def _warm_advanced_ml_cache() -> None:
+    """Precompute the default advanced analytics payload in the background."""
+    try:
+        status = advanced_ml_service.status()
+        if not status["available"]:
+            logger.info(
+                "Skipping advanced ML warmup because dependencies are missing: %s",
+                ", ".join(status["missing_dependencies"]),
+            )
+            return
+
+        db = SessionLocal()
+        try:
+            posts = nlp_analysis._fetch_recent_posts(db, days=7, platform="all", limit=120)
+            if not posts:
+                logger.info("Skipping advanced ML warmup because there are no recent posts")
+                return
+
+            advanced_ml_service.analyze_posts(
+                db,
+                posts=posts,
+                topic_limit=6,
+                sample_limit=8,
+            )
+            logger.info("Advanced ML warmup completed for default analytics views")
+        finally:
+            db.close()
+    except Exception:
+        logger.exception("Advanced ML warmup failed")
 
 # Create FastAPI app
 app = FastAPI(
@@ -91,6 +124,15 @@ def startup_event():
             conn.execute(text("ALTER TABLE IF EXISTS twitter_posts ALTER COLUMN source_type SET NOT NULL"))
             conn.execute(text("ALTER TABLE IF EXISTS reddit_posts ALTER COLUMN source_type SET NOT NULL"))
 
+            # Leader profile extensions
+            conn.execute(text("ALTER TABLE party_leaders ADD COLUMN IF NOT EXISTS bio TEXT"))
+            conn.execute(text("ALTER TABLE party_leaders ADD COLUMN IF NOT EXISTS state VARCHAR(100)"))
+            conn.execute(text("ALTER TABLE party_leaders ADD COLUMN IF NOT EXISTS constituency VARCHAR(200)"))
+            conn.execute(text("ALTER TABLE party_leaders ADD COLUMN IF NOT EXISTS election_history TEXT"))
+            conn.execute(text("ALTER TABLE party_leaders ADD COLUMN IF NOT EXISTS photo_image_data BYTEA"))
+            conn.execute(text("ALTER TABLE party_leaders ADD COLUMN IF NOT EXISTS photo_image_content_type VARCHAR(100)"))
+            conn.execute(text("ALTER TABLE party_leaders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT now()"))
+
             # One-time migration from legacy unified social_posts table into split tables.
             legacy_social_table = conn.execute(
                 text("SELECT to_regclass('public.social_posts')")
@@ -170,6 +212,8 @@ def startup_event():
         # Run seeding after backward-compatible column migrations.
         ensure_admin_user_exists()
 
+        Thread(target=_warm_advanced_ml_cache, name="advanced-ml-warmup", daemon=True).start()
+
     except Exception:
         logger.exception("Database initialization failed")
 
@@ -185,6 +229,7 @@ app.include_router(predictions_news.router_news)
 app.include_router(admin.router)
 app.include_router(nlp_analysis.router)
 app.include_router(events.router)
+app.include_router(leaders.router)
 
 
 @app.get("/")

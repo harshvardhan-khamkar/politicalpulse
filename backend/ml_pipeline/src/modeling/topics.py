@@ -1,5 +1,7 @@
 import logging
 from typing import List, Tuple
+from pathlib import Path
+
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -14,11 +16,39 @@ class BERTopicModeler:
         self.topic_model = None
         self._initialize()
 
+    @property
+    def _cache_dir(self) -> Path:
+        return Path(__file__).resolve().parents[2] / ".hf_cache"
+
     def _initialize(self):
         try:
             from bertopic import BERTopic
+            from sentence_transformers import SentenceTransformer
+
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
+            embedding_model_name = "sentence-transformers/all-MiniLM-L6-v2"
+
+            try:
+                embedding_model = SentenceTransformer(
+                    embedding_model_name,
+                    cache_folder=str(self._cache_dir),
+                    local_files_only=True,
+                )
+                logger.info("Loaded cached sentence-transformer for BERTopic")
+            except Exception:
+                logger.info("Cached BERTopic embedding model not found, downloading from Hugging Face")
+                embedding_model = SentenceTransformer(
+                    embedding_model_name,
+                    cache_folder=str(self._cache_dir),
+                )
+
             # Calculate probabilities slows down training significantly, skip if not needed
-            self.topic_model = BERTopic(language="english", calculate_probabilities=False, verbose=True)
+            self.topic_model = BERTopic(
+                language="english",
+                embedding_model=embedding_model,
+                calculate_probabilities=False,
+                verbose=True,
+            )
             logger.info("BERTopic initialized successfully")
         except ImportError:
             logger.error("'bertopic' not installed. Install via requirements_ml.txt")

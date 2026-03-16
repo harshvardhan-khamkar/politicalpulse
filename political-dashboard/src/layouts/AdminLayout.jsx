@@ -7,6 +7,7 @@ import {
     Settings2,
     ChevronLeft,
     ShieldCheck,
+    Users,
 } from 'lucide-react';
 import AdminRoute from '../components/AdminRoute';
 
@@ -16,6 +17,7 @@ const NAV_ITEMS = [
     { to: '/admin', icon: LayoutDashboard, label: 'Dashboard', end: true },
     { to: '/admin/polls', icon: ClipboardList, label: 'Poll Management' },
     { to: '/admin/parties', icon: Megaphone, label: 'Party Management' },
+    { to: '/admin/leaders', icon: Users, label: 'Leader Management' },
     { to: '/admin/system', icon: Settings2, label: 'System Controls' },
 ];
 

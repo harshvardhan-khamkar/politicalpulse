@@ -8,17 +8,20 @@ const EventsTimelinePage = () => {
     const [shiftData, setShiftData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const [usingSampleEvents, setUsingSampleEvents] = useState(false);
+    const [usingSampleShift, setUsingSampleShift] = useState(false);
 
     const fetchEvents = async () => {
         try {
             const { data } = await api.get('/events/');
             setEvents(data);
+            setUsingSampleEvents(false);
             if (data.length > 0) {
                 handleSelectEvent(data[0].id);
             }
         } catch (err) {
             console.error(err);
-            // Dummy data fallback
+            setUsingSampleEvents(true);
             const dummyEvents = [
                 { id: 1, name: "Union Budget Announcement", date: "2024-02-01", description: "Finance minister announces interim budget." },
                 { id: 2, name: "State Assembly Elections Results", date: "2023-12-03", description: "Results for 4 major states declared." }
@@ -33,12 +36,13 @@ const EventsTimelinePage = () => {
     const handleSelectEvent = async (id) => {
         setSelectedEventId(id);
         setShiftData(null);
+        setUsingSampleShift(false);
         try {
             const { data } = await api.get(`/events/${id}/discourse-shift?window_days=7`);
             setShiftData(data);
         } catch (err) {
             console.error(err);
-            // Mock shift data
+            setUsingSampleShift(true);
             setShiftData({
                 window_days: 7,
                 shifts: {
@@ -109,6 +113,14 @@ const EventsTimelinePage = () => {
                     </p>
                 </div>
             </div>
+
+            {(usingSampleEvents || usingSampleShift) && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    {usingSampleEvents || usingSampleShift
+                        ? 'Showing sample fallback event analytics because the live API response was unavailable.'
+                        : ''}
+                </div>
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                 {/* Timeline / Event List Sidebar */}

@@ -49,6 +49,10 @@ class PartyLeaderBase(BaseModel):
     photo_url: Optional[str] = Field(None, max_length=500)
     twitter_handle: Optional[str] = Field(None, max_length=50, pattern=r'^@?[A-Za-z0-9_]+$')
     display_order: Optional[int] = Field(0, ge=0)
+    bio: Optional[str] = None
+    state: Optional[str] = Field(None, max_length=100)
+    constituency: Optional[str] = Field(None, max_length=200)
+    election_history: Optional[str] = None
 
 
 class PartyLeaderCreate(PartyLeaderBase):
@@ -63,6 +67,10 @@ class PartyLeaderUpdate(BaseModel):
     photo_url: Optional[str] = None
     twitter_handle: Optional[str] = None
     display_order: Optional[int] = None
+    bio: Optional[str] = None
+    state: Optional[str] = None
+    constituency: Optional[str] = None
+    election_history: Optional[str] = None
 
 
 class PartyLeaderResponse(PartyLeaderBase):
@@ -73,6 +81,44 @@ class PartyLeaderResponse(PartyLeaderBase):
 
     class Config:
         from_attributes = True
+
+
+class LeaderListResponse(BaseModel):
+    """Slim leader card for listing pages."""
+    id: int
+    name: str
+    position: Optional[str] = None
+    party_id: int
+    party_name: Optional[str] = None
+    party_short_name: Optional[str] = None
+    party_color_hex: Optional[str] = None
+    photo_url: Optional[str] = None
+    has_photo_image: bool = False
+    state: Optional[str] = None
+    twitter_handle: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class LeaderWikiResponse(BaseModel):
+    """Full leader detail payload."""
+    id: int
+    name: str
+    position: Optional[str] = None
+    bio: Optional[str] = None
+    state: Optional[str] = None
+    constituency: Optional[str] = None
+    election_history: Optional[str] = None
+    twitter_handle: Optional[str] = None
+    photo_url: Optional[str] = None
+    has_photo_image: bool = False
+    party_id: int
+    party_name: Optional[str] = None
+    party_short_name: Optional[str] = None
+    party_color_hex: Optional[str] = None
+    wordcloud_url_en: str = ""
+    wordcloud_url_hi: str = ""
 
 
 class PartyResponse(PartyBase):

@@ -8,25 +8,52 @@ const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'
 const TopicAnalysisPage = () => {
     const [topics, setTopics] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [stats, setStats] = useState({ documentCount: 0, timeframe: 7 });
+    const [stats, setStats] = useState({ documentCount: 0, timeframe: 7, modelUsed: 'advanced' });
+    const [usingSampleData, setUsingSampleData] = useState(false);
+    const [fallbackReason, setFallbackReason] = useState('');
 
     const fetchTopics = async () => {
         setLoading(true);
+        setUsingSampleData(false);
+        setFallbackReason('');
         try {
-            const { data } = await api.get('/nlp/topics?days=7&limit=6');
+            const { data } = await api.get('/nlp/topics?days=7&limit=6&model=advanced&document_limit=120');
             setTopics(data.topics || []);
             setStats({
                 documentCount: data.document_count,
                 timeframe: data.timeframe_days,
+                modelUsed: data.model_used || 'advanced',
             });
         } catch (error) {
             console.error('Error fetching topics:', error);
-            // Fallback mock data if API fails or has no text
-            setTopics([
-                { topic_name: 'Budget-Economy', salience_score: 0.35, keywords: ['budget', 'economy', 'tax', 'finance', 'relief'] },
-                { topic_name: 'Election-Rallies', salience_score: 0.25, keywords: ['election', 'vote', 'rally', 'speech', 'crowd'] },
-                { topic_name: 'Infrastructure-Development', salience_score: 0.20, keywords: ['road', 'bridge', 'inauguration', 'development', 'highway'] },
-            ]);
+            try {
+                const fallback = await api.get('/nlp/topics?days=7&limit=6&model=basic');
+                setTopics(fallback.data.topics || []);
+                setStats({
+                    documentCount: fallback.data.document_count,
+                    timeframe: fallback.data.timeframe_days,
+                    modelUsed: fallback.data.model_used || 'basic',
+                });
+                setFallbackReason(
+                    `Advanced ML pipeline unavailable, showing basic NLP topics instead. ${
+                        error.response?.data?.detail || ''
+                    }`.trim()
+                );
+            } catch (fallbackError) {
+                console.error('Error fetching fallback topics:', fallbackError);
+                setUsingSampleData(true);
+                setFallbackReason(
+                    fallbackError.response?.data?.detail ||
+                    error.response?.data?.detail ||
+                    'Live topic extraction is currently unavailable.'
+                );
+                setTopics([
+                    { topic_name: 'Budget-Economy', salience_score: 0.35, keywords: ['budget', 'economy', 'tax', 'finance', 'relief'] },
+                    { topic_name: 'Election-Rallies', salience_score: 0.25, keywords: ['election', 'vote', 'rally', 'speech', 'crowd'] },
+                    { topic_name: 'Infrastructure-Development', salience_score: 0.20, keywords: ['road', 'bridge', 'inauguration', 'development', 'highway'] },
+                ]);
+                setStats({ documentCount: 0, timeframe: 7, modelUsed: 'sample' });
+            }
         } finally {
             setLoading(false);
         }
@@ -50,7 +77,7 @@ const TopicAnalysisPage = () => {
                         Public Discourse Topics
                     </h1>
                     <p className="text-gray-500 text-sm mt-1 ml-4">
-                        Latent topic extraction via NLP mapping current issue salience.
+                        Advanced BERTopic + transformer pipeline with automatic fallback to the basic NLP model.
                     </p>
                 </div>
                 <button
@@ -63,10 +90,22 @@ const TopicAnalysisPage = () => {
                 </button>
             </div>
 
+            {usingSampleData && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    Showing sample fallback topics. {fallbackReason}
+                </div>
+            )}
+
+            {!usingSampleData && fallbackReason && (
+                <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
+                    {fallbackReason}
+                </div>
+            )}
+
             {loading ? (
                 <div className="flex flex-col items-center justify-center h-64 bg-white rounded-xl shadow-sm border border-gray-100">
                     <Loader2 className="w-10 h-10 animate-spin text-indigo-600 mb-4" />
-                    <p className="text-gray-500 font-medium animate-pulse">Running TF-IDF & NMF Models...</p>
+                    <p className="text-gray-500 font-medium animate-pulse">Running advanced ML topic extraction...</p>
                 </div>
             ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -110,6 +149,10 @@ const TopicAnalysisPage = () => {
                                     <p className="text-indigo-100 text-xs uppercase tracking-wider">Topics Found</p>
                                     <p className="text-2xl font-bold">{topics.length}</p>
                                 </div>
+                            </div>
+                            <div className="mt-4">
+                                <p className="text-indigo-100 text-xs uppercase tracking-wider">Model</p>
+                                <p className="text-lg font-bold capitalize">{stats.modelUsed}</p>
                             </div>
                         </div>
 

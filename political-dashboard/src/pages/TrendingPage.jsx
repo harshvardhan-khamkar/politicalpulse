@@ -10,9 +10,9 @@ const TrendingPage = () => {
                     <TrendingUp className="w-5 h-5 text-white" />
                 </div>
                 <div>
-                    <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Trending Topics</h1>
+                    <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Trending Hashtags</h1>
                     <p className="text-sm text-gray-500 mt-1">
-                        Real-time political pulse and hashtag momentum across social platforms.
+                        Live Twitter/X hashtags with stored-data fallback when live trends are unavailable.
                     </p>
                 </div>
             </div>

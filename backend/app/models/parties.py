@@ -57,10 +57,21 @@ class PartyLeader(Base):
     photo_url = Column(String(500))
     twitter_handle = Column(String(50))
 
+    # Extended profile fields
+    bio = Column(Text)  # Short summary / about
+    state = Column(String(100))  # Home state
+    constituency = Column(String(200))  # Current constituency
+    election_history = Column(Text)  # Past election record (prose or JSON)
+
+    # Photo binary storage (same pattern as Party.logo_image_data)
+    photo_image_data = Column(LargeBinary)
+    photo_image_content_type = Column(String(100))
+
     # Order for display
     display_order = Column(Integer, default=0)
 
     created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     # Relationship
     party = relationship("Party", back_populates="leaders")

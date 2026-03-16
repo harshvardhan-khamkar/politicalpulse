@@ -59,6 +59,7 @@ htmlcov/
 *.pth
 *.bin
 *.onnx
+backend/ml_pipeline/.hf_cache/
 
 # Frontend
 node_modules/
@@ -75,3 +76,5 @@ pytest_out.txt
 pytest_out_utf8.txt
 test_discourse_out.txt
 test_discourse_out2.txt
+
+public/
