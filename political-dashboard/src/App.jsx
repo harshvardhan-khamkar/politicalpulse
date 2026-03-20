@@ -21,6 +21,7 @@ import AuthPage from './pages/AuthPage';
 import TopicAnalysisPage from './pages/TopicAnalysisPage';
 import EventsTimelinePage from './pages/EventsTimelinePage';
 import TopTweetsPage from './pages/TopTweetsPage';
+import PublicSentimentPage from './pages/PublicSentimentPage';
 import SettingsPage from './pages/SettingsPage';
 import SupportPage from './pages/SupportPage';
 import AdminDashboardPage from './pages/AdminDashboardPage';
@@ -46,6 +47,7 @@ function App() {
           <Route path="analytics" element={<InsightsPage />} />
           <Route path="trending" element={<TrendingPage />} />
           <Route path="topics" element={<TopicAnalysisPage />} />
+          <Route path="public-sentiment" element={<PublicSentimentPage />} />
           <Route path="events" element={<EventsTimelinePage />} />
           <Route path="top-tweets" element={<TopTweetsPage />} />
           <Route path="party-info" element={<PartyInfoPage />} />

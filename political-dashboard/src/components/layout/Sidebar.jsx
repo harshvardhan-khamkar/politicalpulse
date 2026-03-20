@@ -37,6 +37,7 @@ const Sidebar = () => {
             items: [
                 { to: '/', icon: Trophy, label: 'Leaderboard' },
                 { to: '/topics', icon: Activity, label: 'Topic Analysis' },
+                { to: '/public-sentiment', icon: Users, label: 'Public Reaction' },
                 { to: '/events', icon: LineChart, label: 'Discourse Mapping' },
                 { to: '/top-tweets', icon: Twitter, label: 'Top Tweets' },
                 { to: '/trending', icon: TrendingUp, label: 'Trending Topics' },

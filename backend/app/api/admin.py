@@ -712,3 +712,32 @@ def admin_status(db: Session = Depends(get_db)):
         "metrics": metrics,
         "message": "Admin endpoints are operational"
     }
+
+
+@router.post("/trigger-reply-pipeline")
+async def trigger_reply_pipeline(
+    batch_size: int = Query(20, ge=1, le=100, description="Number of tweets to process"),
+    db: Session = Depends(get_db),
+):
+    """
+    Manually trigger one batch of the tweet reply analysis pipeline.
+
+    Fetches replies for up to `batch_size` tweets that have not yet been
+    processed (replies_fetched=False, replies>2), runs MiniLM sentiment
+    on the replies, and writes public_sentiment_* back to the parent tweet.
+
+    Useful for testing without waiting 30 minutes for the APScheduler job.
+    """
+    from app.services.reply_pipeline import run_reply_pipeline
+
+    try:
+        logger.info(f"Manual reply pipeline trigger: batch_size={batch_size}")
+        stats = await run_reply_pipeline(db=db, batch_size=batch_size)
+        return {
+            "status": "success",
+            "message": f"Reply pipeline completed. Processed {stats.get('processed', 0)} tweets.",
+            "stats": stats,
+        }
+    except Exception as exc:
+        logger.exception("Manual reply pipeline trigger failed")
+        raise HTTPException(status_code=500, detail=str(exc))

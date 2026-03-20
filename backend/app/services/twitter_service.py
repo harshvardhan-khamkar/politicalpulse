@@ -72,16 +72,24 @@ class TwitterService:
         self._live_trends_cache: Dict[Tuple[str, str, int, bool], LiveTrendCacheEntry] = {}
         self._live_trends_lock = RLock()
 
-    async def _init_client(self):
-        """Initialize Twikit client with cookies"""
-        if self.initialized:
+    async def _init_client(self, force_relogin: bool = False):
+        """Initialize Twikit client with cookies or fallback to .env credentials"""
+        if self.initialized and not force_relogin:
             return
+        self.initialized = False
         try:
             from twikit import Client
-            if not os.path.exists(self.cookies_path):
-                raise FileNotFoundError(f"Twitter cookies not found at {self.cookies_path}")
             self.client = Client(language="en-US")
-            self.client.load_cookies(self.cookies_path)
+            if force_relogin or not os.path.exists(self.cookies_path):
+                import os
+                logger.warning("Attempting Twikit login via .env credentials...")
+                username = os.environ.get("TWITTER_USERNAME", "syman763255")
+                email = os.environ.get("TWITTER_EMAIL", "spymanxavier@gmail.com")
+                password = os.environ.get("TWITTER_PASSWORD", "9421150039")
+                await self.client.login(auth_info_1=username, auth_info_2=email, password=password)
+                self.client.save_cookies(self.cookies_path)
+            else:
+                self.client.load_cookies(self.cookies_path)
             self.initialized = True
             logger.info("Twitter client initialized successfully")
         except ImportError:
@@ -365,7 +373,37 @@ class TwitterService:
             while collected < target_count:
                 try:
                     if tweets is None:
-                        tweets = await self.client.search_tweet(query, product)
+                        try:
+
+                            tweets = await self.client.search_tweet(query, product)
+
+                        except Exception as e:
+
+                            if "KEY_BYTE" in str(e):
+
+                                logger.warning("KEY_BYTE error — refreshing client and retrying")
+
+                                await self._init_client(force_relogin=True)
+
+                                import asyncio
+
+                                await asyncio.sleep(5)
+
+                                try:
+
+                                    tweets = await self.client.search_tweet(query, product)
+
+                                except Exception as retry_e:
+
+                                    logger.error(f"Retry also failed: {retry_e}")
+
+                                    continue
+
+                            else:
+
+                                logger.error(f"Query failed: {e}")
+
+                                continue
                     else:
                         tweets = await tweets.next()
 
@@ -720,6 +758,66 @@ class TwitterService:
             }
             for tag, count in top
         ]
+
+
+    # ─── Reply fetcher ────────────────────────────────────────────────────────
+
+    async def fetch_tweet_replies(
+        self, post_id: str, max_replies: int = 80
+    ) -> list[dict]:
+        """
+        Fetch replies for a given tweet using twikit.
+
+        Paginates via cursor.next() until max_replies is reached or no more pages.
+        Filters noise: very short texts, pure @mention openers, and retweets.
+
+        Returns a list of dicts ready to be inserted into TweetReply.
+        """
+        await self._init_client()
+        replies: list[dict] = []
+
+        try:
+            tweet = await self.client.get_tweet_by_id(post_id)
+            cursor = await tweet.replies()
+
+            while cursor and len(replies) < max_replies:
+                for reply in cursor:
+                    text: str = (reply.text or "").strip()
+
+                    # ── Noise filters ─────────────────────────────────────────
+                    if len(text.split()) < 3:
+                        continue  # too short (stickers, single words, emojis)
+                    if text.startswith("RT "):
+                        continue  # retweet — not an original reaction
+                    words = text.split()
+                    if text.startswith("@") and len(words) < 5:
+                        continue  # pure @mention with no real content
+
+                    replies.append(
+                        {
+                            "reply_id": str(reply.id),
+                            "reply_username": getattr(reply.user, "screen_name", None),
+                            "reply_content": text,
+                            "reply_likes": int(getattr(reply, "favorite_count", 0) or 0),
+                            "reply_posted_at": getattr(reply, "created_at", None),
+                        }
+                    )
+
+                    if len(replies) >= max_replies:
+                        break
+
+                await asyncio.sleep(1.5)  # twikit rate-limit buffer between pages
+
+                try:
+                    cursor = await cursor.next()
+                except Exception:
+                    break  # no more pages or pagination error
+
+        except Exception as exc:
+            logger.warning(f"Reply fetch failed for tweet {post_id}: {exc}")
+
+        logger.info(f"fetch_tweet_replies({post_id}): {len(replies)} replies collected")
+        return replies
 
 
 # Global instance

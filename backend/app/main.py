@@ -10,7 +10,13 @@ from app.database import Base, SessionLocal, engine
 from app.api import auth, elections, polls, parties, social_media, predictions_news, admin, nlp_analysis, events, leaders
 from app.models.users import AppUser  # noqa: F401 - ensures table metadata is registered
 from app.security import ensure_admin_user_exists
+
+import os
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+os.environ["HF_DATASETS_OFFLINE"] = "1"
+
 from app.services.advanced_ml_service import advanced_ml_service
+from app.services.reply_analysis_service import reply_analysis_service
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +51,21 @@ def _warm_advanced_ml_cache() -> None:
     except Exception:
         logger.exception("Advanced ML warmup failed")
 
+
+def _warm_reply_analysis_service() -> None:
+    """Pre-load the MiniLM model at startup so the first pipeline run is fast."""
+    try:
+        logger.info("Pre-loading MiniLM reply analysis model…")
+        reply_analysis_service._ensure_initialized()
+        if reply_analysis_service.is_available:
+            logger.info("MiniLM reply analysis model ready.")
+        else:
+            logger.warning("MiniLM reply analysis model failed to load: %s", reply_analysis_service._init_error)
+    except Exception:
+        logger.exception("Reply analysis warmup failed")
+
+
+
 # Create FastAPI app
 app = FastAPI(
     title="PoliPulse API",
@@ -63,12 +84,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ─── APScheduler (reply pipeline) ─────────────────────────────────────────────
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from app.services.reply_pipeline import run_reply_pipeline
+
+_scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
+
 
 @app.on_event("startup")
-def startup_event():
-    """Create tables and seed auth data."""
+async def startup_event():
+    """Create tables, seed auth data, start reply-pipeline scheduler."""
+
     try:
         Base.metadata.create_all(bind=engine)
+
+        migrations = [
+            "ALTER TABLE twitter_posts ADD COLUMN IF NOT EXISTS public_sentiment_label VARCHAR(20)",
+            "ALTER TABLE twitter_posts ADD COLUMN IF NOT EXISTS public_sentiment_score NUMERIC(5,4)",
+            "ALTER TABLE twitter_posts ADD COLUMN IF NOT EXISTS public_reaction_summary JSONB",
+            "ALTER TABLE twitter_posts ADD COLUMN IF NOT EXISTS replies_fetched BOOLEAN DEFAULT false",
+        ]
+        with engine.connect() as conn:
+            for sql in migrations:
+                try:
+                    conn.execute(text(sql))
+                    conn.commit()
+                    logger.info(f"Migration OK: {sql}")
+                except Exception as e:
+                    logger.warning(f"Migration skipped (probably exists): {e}")
 
         with engine.begin() as conn:
             # DB-level protection for one vote per poll per voter identity.
@@ -123,6 +166,9 @@ def startup_event():
             conn.execute(text("ALTER TABLE IF EXISTS reddit_posts ALTER COLUMN source_type SET DEFAULT 'public'"))
             conn.execute(text("ALTER TABLE IF EXISTS twitter_posts ALTER COLUMN source_type SET NOT NULL"))
             conn.execute(text("ALTER TABLE IF EXISTS reddit_posts ALTER COLUMN source_type SET NOT NULL"))
+
+            # Initialise unflagged rows so pending query works correctly
+            conn.execute(text("UPDATE twitter_posts SET replies_fetched = FALSE WHERE replies_fetched IS NULL"))
 
             # Leader profile extensions
             conn.execute(text("ALTER TABLE party_leaders ADD COLUMN IF NOT EXISTS bio TEXT"))
@@ -213,9 +259,40 @@ def startup_event():
         ensure_admin_user_exists()
 
         Thread(target=_warm_advanced_ml_cache, name="advanced-ml-warmup", daemon=True).start()
+        Thread(target=_warm_reply_analysis_service, name="reply-ml-warmup", daemon=True).start()
+
+        # ── Start APScheduler for the reply pipeline ──────────────────────────
+        def _reply_pipeline_job():
+            import asyncio
+            db = SessionLocal()
+            try:
+                asyncio.run(run_reply_pipeline(db=db, batch_size=20))
+            except Exception:
+                logger.exception("Scheduled reply pipeline job failed")
+            finally:
+                db.close()
+
+        _scheduler.add_job(
+            _reply_pipeline_job,
+            trigger="interval",
+            minutes=30,
+            id="reply_pipeline",
+            replace_existing=True,
+            name="Tweet Reply Pipeline",
+        )
+        _scheduler.start()
+        logger.info("APScheduler started — reply pipeline will run every 30 minutes.")
 
     except Exception:
         logger.exception("Database initialization failed")
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    """Gracefully shut down the APScheduler."""
+    if _scheduler.running:
+        _scheduler.shutdown(wait=False)
+        logger.info("APScheduler stopped.")
 
 
 # Include routers

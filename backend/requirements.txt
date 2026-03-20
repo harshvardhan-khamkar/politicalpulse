@@ -10,16 +10,18 @@ psycopg>=3.2.0
 sqlalchemy>=2.0.0
 alembic>=1.13.0
 
-# ML and Data Science (flexible versions for compatibility)
+# ML and Data Science
 scikit-learn>=1.0.0
 numpy>=1.21.0
 pandas>=1.5.0
+matplotlib==3.8.4
+plotly==5.18.0
 
 # Advanced ML Pipeline
-transformers>=4.20.0
+transformers>=4.41.0
 torch>=2.0.0
 bertopic>=0.16.0
-sentence-transformers>=2.2.0
+sentence-transformers>=2.7.0
 
 # Scraping & Social Media
 twikit>=2.1.0
@@ -39,24 +41,10 @@ pillow>=10.0.0
 newsapi-python>=0.2.7
 
 # Background Jobs & Scheduling
-apscheduler>=3.10.0
+apscheduler>=3.11.2
 
 # Utilities
 python-dotenv>=1.0.0
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
 requests>=2.32.0
-# matplotlib==3.8.2
-plotly==5.18.0
-
-# Web Scraping & Parsing
-# beautifulsoup4==4.12.3
-# lxml==5.1.0
-
-# Background Jobs
-apscheduler==3.10.4
-
-# Testing
-pytest==7.4.4
-pytest-asyncio==0.23.3
-httpx==0.26.0

@@ -43,7 +43,7 @@ class SocialPostResponse(SocialPostBase):
     score: int
     posted_at: datetime
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -70,7 +70,7 @@ class SentimentDataResponse(BaseModel):
     source: Optional[str]
     sample_size: int
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -81,3 +81,46 @@ class SentimentQuery(BaseModel):
     entity_type: Optional[str] = Field("party", pattern=r'^(leader|party)$')
     language: Optional[str] = Field(None, description="Filter by language")
     days: Optional[int] = Field(30, ge=1, le=365, description="Days of history to fetch")
+
+
+# ─── Reply Analysis Schemas ────────────────────────────────────────────────────
+
+class TweetReplyResponse(BaseModel):
+    """Schema for a single tweet reply row."""
+    id: int
+    parent_post_id: str
+    reply_id: str
+    reply_username: Optional[str] = None
+    reply_content: str
+    reply_language: Optional[str] = None
+    reply_sentiment_label: Optional[str] = None
+    reply_sentiment_score: Optional[float] = None
+    reply_likes: int = 0
+    reply_posted_at: Optional[datetime] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PublicSentimentResponse(BaseModel):
+    """Public reply-based sentiment for a single tweet."""
+    post_id: str
+    party: Optional[str] = None
+    content_sentiment_label: Optional[str] = None
+    content_sentiment_score: Optional[float] = None
+    public_sentiment_label: Optional[str] = None
+    public_sentiment_score: Optional[float] = None
+    public_reaction_summary: Optional[dict] = None
+    replies_fetched: bool = False
+
+
+class PublicSentimentComparisonResponse(BaseModel):
+    """Party-level side-by-side: VADER content sentiment vs. public reply sentiment."""
+    party: str
+    days: int
+    sample_size: int
+    content_sentiment_avg: float
+    public_sentiment_avg: float
+    content_label_distribution: dict
+    public_label_distribution: dict

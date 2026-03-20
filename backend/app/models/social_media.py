@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, Numeric
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Text, DateTime, Numeric
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 from app.database import Base
 
@@ -40,6 +41,16 @@ class TwitterPost(Base, _SocialPostColumns):
 
     __tablename__ = "twitter_posts"
 
+    # ML Alignment (from alignment_model_service)
+    predicted_alignment = Column(String(50), nullable=True)
+    alignment_confidence = Column(Numeric(5, 4), nullable=True)
+
+    # Public reply sentiment (populated by async reply pipeline)
+    public_sentiment_label = Column(String(20), nullable=True)
+    public_sentiment_score = Column(Numeric(5, 4), nullable=True)
+    public_reaction_summary = Column(JSONB, nullable=True)  # {positive, negative, neutral, total}
+    replies_fetched = Column(Boolean, default=False, nullable=False)
+
     @property
     def platform(self) -> str:
         return "twitter"
@@ -60,6 +71,32 @@ class RedditPost(Base, _SocialPostColumns):
 
     def __repr__(self):
         return f"<RedditPost(id={self.id}, subreddit={self.subreddit}, source_type={self.source_type})>"
+
+
+class TweetReply(Base):
+    """Reply tweets for a parent TwitterPost, analyzed by the async reply pipeline."""
+
+    __tablename__ = "tweet_replies"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    parent_post_id = Column(
+        String(100),
+        ForeignKey("twitter_posts.post_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    reply_id = Column(String(100), unique=True, nullable=False, index=True)
+    reply_username = Column(String(100), nullable=True)
+    reply_content = Column(Text, nullable=False)
+    reply_language = Column(String(10), nullable=True)
+    reply_sentiment_label = Column(String(20), nullable=True)  # positive/negative/neutral
+    reply_sentiment_score = Column(Numeric(5, 4), nullable=True)
+    reply_likes = Column(Integer, default=0)
+    reply_posted_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    def __repr__(self):
+        return f"<TweetReply(reply_id={self.reply_id}, parent={self.parent_post_id}, label={self.reply_sentiment_label})>"
 
 
 class SentimentData(Base):

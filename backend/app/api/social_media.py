@@ -15,11 +15,50 @@ from app.schemas.social_media import (
     SocialPostCreate,
     SocialPostResponse,
 )
+from pydantic import BaseModel
+
+class PublicReactionSummary(BaseModel):
+    positive: int = 0
+    negative: int = 0
+    neutral:  int = 0
+    total:    int = 0
+
+class PartyPublicSentimentResponse(BaseModel):
+    party: str
+    public_reaction_summary: PublicReactionSummary
+    avg_public_score: float
+    tweet_count: int
+
+class TweetReplyResponse(BaseModel):
+    reply_id:              str
+    reply_username:        Optional[str]
+    reply_content:         str
+    reply_sentiment_label: Optional[str]
+    reply_sentiment_score: Optional[float]
+    reply_likes:           int
+    reply_posted_at:       Optional[datetime]
+    party:                 Optional[str]
+    leader_name:           Optional[str]
+
+    class Config:
+        from_attributes = True
+
+class PublicTimelinePoint(BaseModel):
+    date:      str
+    positive:  int
+    negative:  int
+    neutral:   int
+    total:     int
+    avg_score: float
+
+class PaginatedRepliesResponse(BaseModel):
+    items:    List[TweetReplyResponse]
+    total:    int
+    has_more: bool
+    page:     int
 
 router = APIRouter(prefix="/social", tags=["Social Media"])
 logger = logging.getLogger(__name__)
-
-
 def _get_post_model(platform: str):
     if platform == "twitter":
         return TwitterPost
@@ -200,6 +239,51 @@ def get_social_posts(
     ]
     merged.sort(key=lambda post: post["posted_at"], reverse=True)
     return merged[skip : skip + limit]
+
+@router.get("/posts/replies", response_model=PaginatedRepliesResponse)
+def get_paginated_replies(
+    party: Optional[str] = Query(None),
+    reply_sentiment_label: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db)
+):
+    from app.models.social_media import TweetReply
+
+    query = db.query(TweetReply, TwitterPost).outerjoin(
+        TwitterPost, TweetReply.parent_post_id == TwitterPost.post_id
+    )
+
+    if party:
+        query = query.filter(TwitterPost.party == party.upper())
+    
+    if reply_sentiment_label and reply_sentiment_label.lower() != 'all':
+        query = query.filter(TweetReply.reply_sentiment_label == reply_sentiment_label.lower())
+    
+    total_count = query.count()
+    offset = (page - 1) * limit
+    results = query.order_by(desc(TweetReply.reply_likes)).offset(offset).limit(limit).all()
+
+    items = []
+    for reply, post in results:
+        items.append(TweetReplyResponse(
+            reply_id=reply.reply_id,
+            reply_username=reply.reply_username,
+            reply_content=reply.reply_content,
+            reply_sentiment_label=reply.reply_sentiment_label,
+            reply_sentiment_score=float(reply.reply_sentiment_score) if reply.reply_sentiment_score is not None else None,
+            reply_likes=reply.reply_likes or 0,
+            reply_posted_at=reply.reply_posted_at,
+            party=post.party if post else None,
+            leader_name=post.leader_name if post else None
+        ))
+    
+    return PaginatedRepliesResponse(
+        items=items,
+        total=total_count,
+        has_more=(offset + limit) < total_count,
+        page=page
+    )
 
 
 @router.get("/posts/{post_id}", response_model=SocialPostResponse)
@@ -449,3 +533,91 @@ def get_trending_topics(
             for post in posts
         ],
     }
+
+
+
+# ─── Reply Analysis Endpoints ─────────────────────────────────────────────────
+
+@router.get("/sentiment/public-comparison", response_model=List[PartyPublicSentimentResponse])
+def get_public_sentiment_comparison(
+    party: Optional[str] = Query(None, description="Filter by party"),
+    days: int = Query(7, ge=1, le=90),
+    db: Session = Depends(get_db),
+):
+    from sqlalchemy import func, cast, Integer
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    cutoff = datetime.now() - timedelta(days=days)
+    query = db.query(
+        TwitterPost.party,
+        func.sum(cast(TwitterPost.public_reaction_summary['positive'].astext, Integer)).label('positive'),
+        func.sum(cast(TwitterPost.public_reaction_summary['negative'].astext, Integer)).label('negative'),
+        func.sum(cast(TwitterPost.public_reaction_summary['neutral'].astext, Integer)).label('neutral'),
+        func.sum(cast(TwitterPost.public_reaction_summary['total'].astext, Integer)).label('total'),
+        func.avg(TwitterPost.public_sentiment_score).label('avg_score'),
+        func.count().label('tweet_count')
+    ).filter(
+        TwitterPost.replies_fetched == True,
+        TwitterPost.posted_at >= cutoff
+    )
+
+    if party:
+        query = query.filter(TwitterPost.party == party.upper())
+
+    results = query.group_by(TwitterPost.party).all()
+
+    response = []
+    for r in results:
+        pos = r.positive or 0
+        neg = r.negative or 0
+        neu = r.neutral or 0
+        tot = r.total or 0
+        
+        response.append(PartyPublicSentimentResponse(
+            party=r.party or "Unknown",
+            public_reaction_summary=PublicReactionSummary(
+                positive=pos, negative=neg, neutral=neu, total=tot
+            ),
+            avg_public_score=float(r.avg_score) if r.avg_score is not None else 0.0,
+            tweet_count=r.tweet_count or 0
+        ))
+    
+    response.sort(key=lambda x: x.tweet_count, reverse=True)
+    return response
+
+@router.get("/sentiment/public-timeline", response_model=List[PublicTimelinePoint])
+def get_public_timeline(
+    party: str = Query(...),
+    days: int = Query(30, ge=1, le=90),
+    db: Session = Depends(get_db)
+):
+    from sqlalchemy import func, cast, Integer, Date
+    cutoff = datetime.now() - timedelta(days=days)
+
+    query = db.query(
+        func.date(TwitterPost.posted_at).label('date'),
+        func.sum(cast(TwitterPost.public_reaction_summary['positive'].astext, Integer)).label('positive'),
+        func.sum(cast(TwitterPost.public_reaction_summary['negative'].astext, Integer)).label('negative'),
+        func.sum(cast(TwitterPost.public_reaction_summary['neutral'].astext, Integer)).label('neutral'),
+        func.sum(cast(TwitterPost.public_reaction_summary['total'].astext, Integer)).label('total'),
+        func.avg(TwitterPost.public_sentiment_score).label('avg_score')
+    ).filter(
+        TwitterPost.party == party.upper(),
+        TwitterPost.replies_fetched == True,
+        TwitterPost.posted_at >= cutoff
+    ).group_by(func.date(TwitterPost.posted_at)).order_by(func.date(TwitterPost.posted_at).asc())
+
+    results = query.all()
+
+    points = []
+    for r in results:
+        points.append(PublicTimelinePoint(
+            date=str(r.date),
+            positive=r.positive or 0,
+            negative=r.negative or 0,
+            neutral=r.neutral or 0,
+            total=r.total or 0,
+            avg_score=float(r.avg_score) if r.avg_score is not None else 0.0
+        ))
+
+    return points
